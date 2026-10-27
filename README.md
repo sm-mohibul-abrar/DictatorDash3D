@@ -53,7 +53,7 @@ The web build is a line-by-line port of `native/11.py`, not a re-imagining.
 | Game rules: physics, spawning, AI, damage, scoring | `class Game` | `class Game`, with the same method names, numbers and order of operations |
 | 3D drawing | Legacy OpenGL calls (`glPushMatrix`, `glutSolidCube`, `glBegin`…) | The same calls, implemented on Three.js by a ~280-line shim (`glshim.js`) |
 | HUD and menus | `gluOrtho2D` + GLUT fonts | The same functions and coordinates on a Canvas 2D layer |
-| Input | GLUT callbacks | The same callbacks, fed by browser events; phones also get touch buttons |
+| Input | GLUT callbacks | The same callbacks, fed by browser events; phones also get touch buttons and a portrait camera fit |
 | Sound | `winsound.Beep` | Web Audio sine beeps with the same frequencies and durations |
 | High score | `highscore.json` | `localStorage`, in the same JSON format |
 
@@ -69,7 +69,7 @@ Known differences:
 
 ## Run the web version
 
-Open `index.html` in a browser. Three.js loads from a CDN, so you need an internet connection. Add `?msaa` to the URL for anti-aliasing (the same as `--msaa` in the native build). On phones, play in landscape. The touch controls are: swipe to move, jump or slide; tap to shoot; and on-screen buttons for flame, speed, view, time, weather and pause.
+Open `index.html` in a browser. Three.js loads from a CDN, so you need an internet connection. Add `?msaa` to the URL for anti-aliasing (the same as `--msaa` in the native build). Phones work in portrait and landscape (in portrait the camera widens so all five lanes stay visible). The touch controls are: swipe to move, jump or slide; tap to shoot; and icon buttons for flame, speed, view, time, weather and pause.
 
 ## Controls
 

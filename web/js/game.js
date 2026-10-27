@@ -1164,6 +1164,15 @@ function camera() {
 }
 
 
+function fit_fov(fov) {
+  // Web only: a portrait phone keeps the horizontal view of a square window, so all 5 lanes stay
+  // on screen. Landscape windows (every native window) get the FOV unchanged.
+  const a = WIN[0] / WIN[1];
+  if (a >= 1.0) return fov;
+  return 2 * Math.atan(Math.tan(fov * Math.PI / 360) / a) * 180 / Math.PI;
+}
+
+
 function _norm(v) {
   const n = Math.sqrt(v.reduce((a, c) => a + c * c, 0)) || 1.0;
   return v.map(c => c / n);
@@ -1177,7 +1186,8 @@ function _cross(a, b) {
 
 function compute_aim() {
   // Unit vector from Aladdin's hand toward the mouse cursor (pure maths, no GL queries).
-  const [eye, ctr, fov] = camera();
+  const [eye, ctr, fov_] = camera();
+  const fov = fit_fov(fov_);
   const f = _norm([0, 1, 2].map(i => ctr[i] - eye[i]));
   const r = _norm(_cross(f, [Math.sin(g.roll), Math.cos(g.roll), 0.0]));   // camera right (includes bank roll)
   const u = _cross(r, f);
@@ -1227,7 +1237,7 @@ function draw_world() {
   const L = g.loc;
   sky_gradient(e);
   const [eye, ctr, fov] = camera();
-  cam.fov = fov;                                                 // FOV widens with speed
+  cam.fov = fit_fov(fov);                                        // FOV widens with speed
   cam.aspect = WIN[0] / WIN[1];
   cam.updateProjectionMatrix();
   const sh = g.state == 'play' ? g.shake * 0.8 : 0.0;           // no shake on pause / game over
@@ -1665,6 +1675,7 @@ function draw_hud() {
                  [['RESTART [R]', ['restart'], [0.4, 1.0, 0.55]], ['MENU [B]', ['menu'], [1.0, 0.75, 0.3]]]);
   }
 
+  if (isTouch) return;                                           // keyboard hints: the touch buttons replace these keys
   const wl_ = WM[g.wmode] + (g.wmode == 0 ? ` (${WN[g.weather]})` : '');
   const s_ = `[N] Time: ${TODN[g.tod]}    [M] Weather: ${wl_}    [V] View: ${VN[g.view]}    [B] Menu`;
   text(w - tw_(s_, H10) - 14, 6, s_, H10, [0.85, 0.88, 0.95]);

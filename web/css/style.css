@@ -29,38 +29,64 @@ body {
   pointer-events: none;
 }
 
-/* ---- touch controls: hidden unless on a touch device while playing ---- */
-#touch-left, #touch-right {
-  position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
+/* ---- touch controls: hidden unless on a touch device while playing ----
+   Works in portrait and landscape. --b (button size) shrinks on short screens so the
+   right column (4 buttons + FLAME) always fits between the coins panel and the bottom edge. */
+:root {
+  --b: clamp(32px, calc((100vh - 182px) / 4), 46px);
+  --b: clamp(32px, calc((100dvh - 182px) / 4), 46px);
+}
+
+#touch-left, #touch-right, .m-group {
   display: none;
   flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+}
+
+#touch-left, #touch-right {
+  position: fixed;
   z-index: 5;
 }
 
-#touch-left { left: 12px; }
+#touch-left {
+  left: max(12px, env(safe-area-inset-left));
+  top: 50%;
+  transform: translateY(-50%);
+}
 
-/* right column sits under the coins panel and above the FLAME button */
+/* right column: from under the coins panel down to the bottom edge, FLAME pinned at the bottom */
 #touch-right {
-  right: 12px;
+  right: max(12px, env(safe-area-inset-right));
   top: 64px;
-  transform: none;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  justify-content: space-between;
 }
 
 .m-ctrl-btn {
-  width: 46px;
-  height: 46px;
+  width: var(--b);
+  height: var(--b);
+  padding: 0;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.6);
   background: rgba(10, 13, 23, 0.66);
   color: #fff;
-  font: 700 16px Helvetica, Arial, sans-serif;
   touch-action: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: none;
+}
+
+.m-ctrl-btn svg {
+  width: 56%;
+  height: 56%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .m-ctrl-btn:active {
@@ -68,39 +94,24 @@ body {
 }
 
 #bf {
-  position: fixed;
-  right: 14px;
-  bottom: 22px;
-  width: 104px;
-  height: 50px;
-  border-radius: 25px;
-  font-size: 14px;
-  letter-spacing: 2px;
+  width: 64px;
+  height: 64px;
   background: rgba(255, 110, 20, 0.85);
-  display: none;
-  z-index: 5;
+  border-color: rgba(255, 220, 170, 0.8);
+}
+
+#bf svg {
+  fill: rgba(255, 230, 120, 0.9);
+  stroke: #fff;
+  stroke-width: 1.8;
+}
+
+#bf:active {
+  background: rgba(255, 70, 10, 0.95);
 }
 
 body.touch.playing #touch-left,
 body.touch.playing #touch-right,
-body.touch.playing #bf {
+body.touch.playing .m-group {
   display: flex;
-}
-
-/* ---- portrait phones: the game is designed for a landscape window ---- */
-#rotate {
-  position: fixed;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(10, 13, 23, 0.92);
-  color: #f2bf26;
-  font: 600 18px Helvetica, Arial, sans-serif;
-  letter-spacing: 1px;
-  z-index: 20;
-}
-
-@media (orientation: portrait) and (pointer: coarse) {
-  #rotate { display: flex; }
 }
