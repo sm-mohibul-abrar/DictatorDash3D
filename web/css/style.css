@@ -6,598 +6,101 @@
 html, body {
   height: 100%;
   overflow: hidden;
-  font: 600 14px system-ui, -apple-system, sans-serif;
-  color: #fff;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
+/* the sky gradient is set from game.js (sky_gradient) */
 body {
   background: #f79954;
 }
 
-#c {
+#c, #hud {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
-}
-
-.p {
-  background: rgba(8, 10, 20, 0.65);
-  backdrop-filter: blur(8px);
-  border-radius: 16px;
-  padding: 8px 14px;
+  display: block;
 }
 
 #hud {
-  position: fixed;
-  inset: 0;
   pointer-events: none;
+}
+
+/* ---- touch controls: hidden unless on a touch device while playing ---- */
+#touch-left, #touch-right {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
   display: none;
-}
-
-#hud > * {
-  position: absolute;
-}
-
-#hp {
-  left: 14px;
-  top: 14px;
-  width: min(312px, 46vw);
-  padding: 10px;
-}
-
-#hb {
-  position: relative;
-  height: 18px;
-  border-radius: 9px;
-  background: #222;
-  overflow: hidden;
-  margin: 0;
-}
-
-#hb b {
-  position: absolute;
-  left: 10px;
-  top: 1px;
-  font-size: 12px;
-  color: #fff;
-}
-
-#hf {
-  height: 100%;
-  background: #4ade80;
-  width: 100%;
-}
-
-.fb {
-  width: 200px;
-  max-width: 64%;
-  height: 9px;
-  border-radius: 4px;
-  background: #222;
-  overflow: hidden;
-  display: inline-block;
-  vertical-align: middle;
-  margin-top: 9px;
-}
-
-#ff {
-  height: 100%;
-  background: #ff9a20;
-  width: 100%;
-}
-
-#ft {
-  display: inline-block;
-  margin: 9px 0 0 8px;
-  font-size: 10px;
-  vertical-align: middle;
-}
-
-#sc {
-  left: 50%;
-  top: 12px;
-  transform: translateX(-50%);
-  text-align: center;
-  font-size: 11px;
-  color: #9ab;
-  min-width: 210px;
-  padding: 8px 16px;
-  pointer-events: auto;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: transform 0.12s, background 0.12s;
-}
-
-#sc:active {
-  transform: translateX(-50%) scale(0.94);
-  background: rgba(30, 36, 56, 0.9);
-}
-
-#spause {
-  display: inline-block;
-  font-size: 11px;
-  margin-left: 4px;
-  color: #ffc733;
-  vertical-align: 0px;
-}
-
-#sc b {
-  font: 400 24px Georgia, serif;
-  color: #f2bf26;
-  display: block;
-}
-
-#cn {
-  right: 14px;
-  top: 14px;
-  width: min(212px, 40vw);
-  text-align: left;
-  padding: 8px 14px;
-  font-size: 12px;
-}
-
-#cn b {
-  font-size: 18px;
-  margin-right: 12px;
-}
-
-#cn span {
-  color: #9aa;
-}
-
-#cn small {
-  color: #fff;
-  margin-top: 6px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  display: block;
-}
-
-.coin {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #f2bf26;
-  margin-right: 8px;
-  vertical-align: -3px;
-}
-
-#ct {
-  position: absolute;
-  left: 50%;
-  top: 84px;
-  transform: translateX(-50%);
-  display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  gap: 10px;
+  z-index: 5;
 }
 
-#ct #cb, #ct #cv {
-  position: static;
+#touch-left { left: 12px; }
+
+/* right column sits under the coins panel and above the FLAME button */
+#touch-right {
+  right: 12px;
+  top: 64px;
   transform: none;
 }
 
-#cb {
-  text-align: center;
-  font: 400 22px Georgia, serif;
-  color: #ff9a1a;
-  text-shadow: 0 1px 3px #000;
-}
-
-#cb div {
-  width: 120px;
-  height: 6px;
-  border-radius: 3px;
-  background: #262933;
-  margin: 3px auto 0;
-  overflow: hidden;
-}
-
-#cb i {
-  display: block;
-  height: 100%;
-  background: #ff9a1a;
-}
-
-#cv {
-  font-size: 12px;
-  letter-spacing: 2px;
-  text-shadow: 0 1px 3px #000;
-}
-
-@keyframes bl {
-  50% { opacity: 0.3; }
-}
-
-#cv b {
-  color: var(--a);
-  animation: bl 0.5s infinite;
-}
-
-#sp {
-  left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%);
-  text-align: center;
-  width: min(300px, 60vw);
-  padding: 8px 12px;
-}
-
-#sbar {
-  position: relative;
-  height: 9px;
-  border-radius: 5px;
-  background: #262933;
-  margin-top: 6px;
-}
-
-#sfill {
-  display: block;
-  height: 100%;
-  border-radius: 5px;
-  width: 0;
-}
-
-#smin {
-  position: absolute;
-  top: -3px;
-  width: 2px;
-  height: 15px;
-  background: #fff;
-  opacity: 0.8;
-}
-
-#sp em {
-  position: absolute;
-  right: -46px;
-  bottom: 8px;
-  font-size: 10px;
-  color: #9ab;
-  font-style: normal;
-}
-
-#pu {
-  left: 14px;
-  bottom: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.pill {
-  padding: 6px 16px;
-  border-radius: 15px;
-  font-size: 12px;
-}
-
-#fl {
-  position: fixed;
-  inset: 0;
-  background: #f00;
-  opacity: 0;
-  pointer-events: none;
-}
-
-#ov {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.box {
-  background: rgba(8, 10, 20, 0.88);
-  border: 2px solid var(--a, #f2bf26);
-  border-radius: 22px;
-  padding: 20px 24px;
-  width: min(860px, 96vw);
-  max-height: 96vh;
-  overflow: auto;
-  text-align: center;
-  box-shadow: 0 0 40px var(--a, #f2bf26);
-}
-
-h1 {
-  font-weight: 300;
-  font-family: "Segoe UI", Helvetica, Arial, sans-serif;
-  letter-spacing: 5px;
-  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
-  color: #f2bf26;
-  margin-bottom: 4px;
-}
-
-h4 {
-  font-size: 11px;
-  letter-spacing: 3px;
-  color: #8a93a8;
-  margin: 14px 0 8px;
-}
-
-small {
-  display: block;
-  font-size: 11px;
-  color: #8a93a8;
-  font-weight: 500;
-  margin-top: 3px;
-  line-height: 1.5;
-}
-
-p {
-  margin: 8px 0;
-  font-size: 13px;
-}
-
-.row {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.b {
-  background: #0e1019;
-  color: #cfd4e2;
-  border: 2px solid #3a3d4a;
-  border-radius: 13px;
-  padding: 11px 18px;
-  font: inherit;
-  font-size: 16px;
-  cursor: pointer;
-  min-width: 120px;
-}
-
-.b:hover, .sel {
-  border-color: var(--a);
-  color: #fff;
-  background: #1b1e2b;
-}
-
-.sel {
-  box-shadow: 0 0 14px var(--a);
-}
-
-.card {
-  width: 150px;
-  padding: 8px;
-}
-
-.card i {
-  display: block;
-  height: 34px;
-  border-radius: 7px;
-  margin-bottom: 7px;
-}
-
-.go {
-  margin-top: 14px;
-  min-width: 260px;
-  border-color: #59e07f;
-  background: #1f5a38;
-  color: #fff;
-}
-
-/* Crosshair Reticle */
-#rt {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 48px;
-  height: 48px;
-  margin: -24px 0 0 -24px;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48'%3E%3Cg fill='none' stroke='black' stroke-opacity='.55' stroke-width='4.5'%3E%3Ccircle cx='24' cy='24' r='11'/%3E%3Cpath d='M24 9V3M24 39v6M9 24H3M39 24h6'/%3E%3C/g%3E%3Cg fill='none' stroke='white' stroke-width='2'%3E%3Ccircle cx='24' cy='24' r='11'/%3E%3Cpath d='M24 9V3M24 39v6M9 24H3M39 24h6'/%3E%3C/g%3E%3Ccircle cx='24' cy='24' r='2' fill='%23f2bf26'/%3E%3C/svg%3E") center/48px no-repeat;
-  pointer-events: none;
-  display: none;
-  z-index: 6;
-}
-
-body.pl #c {
-  cursor: none;
-}
-
-/* Base style for mobile control buttons */
 .m-ctrl-btn {
-  display: none;
-  border: 2px solid rgba(255, 255, 255, 0.65);
-  background: rgba(18, 22, 36, 0.75);
-  backdrop-filter: blur(8px);
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  background: rgba(10, 13, 23, 0.66);
   color: #fff;
+  font: 700 16px Helvetica, Arial, sans-serif;
   touch-action: none;
-  -webkit-tap-highlight-color: transparent;
+  display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
 }
 
 .m-ctrl-btn:active {
   background: rgba(55, 65, 95, 0.9);
-  transform: scale(0.93);
 }
 
-/* 1. Top-Left Viewpoint Button */
-#bv {
-  position: fixed;
-  left: 12px;
-  top: 12px;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  font-size: 20px;
-  z-index: 10;
-}
-
-/* 2. Top-Right Weather Button */
-#bw {
-  position: fixed;
-  right: 12px;
-  top: 12px;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  font-size: 19px;
-  z-index: 10;
-}
-
-/* 3. Top-Right Time Button (Stacked Below Weather) */
-#bt {
-  position: fixed;
-  right: 12px;
-  top: 66px;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  font-size: 20px;
-  z-index: 10;
-}
-
-/* 4. Bottom-Left Arrow Container & Buttons */
-#m-speed {
-  position: fixed;
-  left: 14px;
-  bottom: 20px;
-  display: none;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 8;
-}
-
-#m-speed .m-ctrl-btn {
-  display: flex !important;
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  font: 700 20px system-ui, sans-serif;
-}
-
-/* 5. Bottom-Right Flame Button */
 #bf {
   position: fixed;
   right: 14px;
-  bottom: 20px;
-  width: 116px;
-  height: 54px;
-  border-radius: 27px;
-  font: 800 15px system-ui, sans-serif;
+  bottom: 22px;
+  width: 104px;
+  height: 50px;
+  border-radius: 25px;
+  font-size: 14px;
   letter-spacing: 2px;
   background: rgba(255, 110, 20, 0.85);
-  box-shadow: 0 0 16px rgba(255, 110, 20, 0.45);
-  z-index: 8;
+  display: none;
+  z-index: 5;
 }
 
-#bf:active {
-  background: rgba(255, 70, 0, 0.95);
+body.touch.playing #touch-left,
+body.touch.playing #touch-right,
+body.touch.playing #bf {
+  display: flex;
 }
 
-#tv {
-  position: fixed;
-  left: 50%;
-  top: 125px;
-  transform: translateX(-50%);
-  padding: 6px 16px;
-  border-radius: 12px;
-  background: rgba(8, 10, 20, 0.85);
-  opacity: 0;
-  transition: opacity 0.3s;
-  pointer-events: none;
-  font-size: 13px;
-  letter-spacing: 2px;
-  z-index: 9;
-}
-
-#vg, #sl {
+/* ---- portrait phones: the game is designed for a landscape window ---- */
+#rotate {
   position: fixed;
   inset: 0;
-  pointer-events: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 13, 23, 0.92);
+  color: #f2bf26;
+  font: 600 18px Helvetica, Arial, sans-serif;
+  letter-spacing: 1px;
+  z-index: 20;
 }
 
-#vg {
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
-}
-
-#sbr {
-  position: fixed;
-  right: 14px;
-  bottom: 6px;
-  font-size: 10px;
-  color: #d9e0f2;
-  text-shadow: 0 1px 2px #000;
-  pointer-events: none;
-}
-
-/* Mobile HUD Layout (No overlaps on phone screens) */
-@media (max-width: 768px) {
-  #hp {
-    left: 64px;
-    top: 12px;
-    width: 110px;
-    padding: 6px 8px;
-    border-radius: 12px;
-  }
-  #hb {
-    height: 12px;
-  }
-  #hb b {
-    font-size: 9px;
-    top: -1px;
-    left: 4px;
-  }
-  .fb {
-    width: 65px;
-    height: 5px;
-    margin-top: 4px;
-  }
-  #ft {
-    display: none;
-  }
-
-  #sc {
-    top: 12px;
-    min-width: auto;
-    padding: 4px 12px;
-    font-size: 9px;
-    border-radius: 12px;
-  }
-  #sc b {
-    font-size: 16px;
-  }
-
-  #cn {
-    right: 64px;
-    top: 12px;
-    width: 100px;
-    padding: 6px 8px;
-    border-radius: 12px;
-  }
-  #cn b {
-    font-size: 14px;
-    margin-right: 4px;
-  }
-  #cn span {
-    font-size: 9px;
-  }
-  #cn small {
-    display: none;
-  }
-
-  #sp {
-    width: min(200px, 48vw);
-    bottom: 14px;
-  }
-  #pu {
-    left: 14px;
-    bottom: 146px;
-  }
-  #sbr {
-    display: none !important;
-  }
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate { display: flex; }
 }

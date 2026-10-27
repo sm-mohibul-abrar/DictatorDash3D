@@ -4,56 +4,31 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Dictator's Dash 3D</title>
+  <meta name="description" content="Endless 3D lane-runner: a faithful web port of a PyOpenGL / GLUT course project.">
   <link rel="stylesheet" href="web/css/style.css">
 </head>
 <body>
+  <!-- 3D world (Three.js, driven by glshim.js) and the 2D HUD drawn on top of it -->
   <canvas id="c"></canvas>
-  <div id="vg"></div>
-  <canvas id="sl"></canvas>
+  <canvas id="hud"></canvas>
 
-  <!-- Mobile Top Action Buttons -->
-  <button id="bv" class="m-ctrl-btn" aria-label="Toggle View">&#128065;</button>
-  <button id="bw" class="m-ctrl-btn" aria-label="Toggle Weather">&#9729;</button>
-  <button id="bt" class="m-ctrl-btn" aria-label="Toggle Time">&#9728;</button>
-
-  <div id="hud">
-    <div id="hp" class="p">
-      <div id="hb"><div id="hf"></div><b id="ht"></b></div>
-      <div class="fb"><div id="ff"></div></div>
-      <small id="ft"></small>
-    </div>
-    <!-- Tappable Score Container for In-Game Pause -->
-    <div id="sc" class="p" role="button" aria-label="Pause Game">
-      SCORE <span id="spause">&#9208;</span>
-      <b id="sv">0</b>
-    </div>
-    <div id="cn" class="p"></div>
-    <div id="ct"><div id="cb"></div><div id="cv"></div></div>
-    <div id="sp" class="p">
-      <span id="st"></span>
-      <div id="sbar"><i id="sfill"></i><u id="smin"></u></div>
-      <em id="shint">Q / E</em>
-    </div>
-    <div id="pu"></div>
-  </div>
-
-  <div id="sbr"></div>
-  <div id="fl"></div>
-  <div id="rt"></div>
-  <div id="tv"></div>
-
-  <!-- Mobile Bottom Action Controls -->
-  <div id="m-speed">
+  <!-- Touch controls (phones only). They call the same game actions as the keyboard. -->
+  <div id="touch-left">
     <button id="be" class="m-ctrl-btn" aria-label="Faster">&#9650;</button>
     <button id="bq" class="m-ctrl-btn" aria-label="Slower">&#9660;</button>
   </div>
-  <button id="bf" class="m-ctrl-btn" aria-label="Flame">FLAME</button>
-
-  <div id="ov">
-    <div class="box" id="bx"></div>
+  <div id="touch-right">
+    <button id="bp" class="m-ctrl-btn" aria-label="Pause">&#10074;&#10074;</button>
+    <button id="bv" class="m-ctrl-btn" aria-label="Camera view">V</button>
+    <button id="bt" class="m-ctrl-btn" aria-label="Time of day">N</button>
+    <button id="bw" class="m-ctrl-btn" aria-label="Weather">M</button>
   </div>
+  <button id="bf" class="m-ctrl-btn" aria-label="Flamethrower">FLAME</button>
+
+  <div id="rotate">Rotate your phone to landscape</div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="web/js/glshim.js"></script>
   <script src="web/js/game.js"></script>
 </body>
 </html>
