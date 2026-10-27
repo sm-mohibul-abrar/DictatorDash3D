@@ -8,6 +8,8 @@ Aladdin sprints down a bending royal road: jump barriers, slide under beams, sho
 
 **▶ Play in the browser (web version):** https://sm-mohibul-abrar.github.io/DictatorDash3D/
 
+**⬇ itch.io (play online or download the Windows `.exe`):** https://mohib-abrar.itch.io/dictatordash3d
+
 | Start menu | Neon City |
 |---|---|
 | ![Menu](assets/menu.png) | ![Neon City](assets/play_neon.png) |
@@ -118,7 +120,8 @@ Open `index.html` in a browser. Three.js loads from a CDN, so you need an intern
 ## Builds
 
 - **Web:** served from this repository by GitHub Pages (link at the top).
-- **Windows:** a standalone `.exe` that runs without Python. It is built from `native/11.py` with PyInstaller.
+- **itch.io:** https://mohib-abrar.itch.io/dictatordash3d, with the browser build and the Windows download on one page.
+- **Windows:** a standalone `.exe` that runs without Python, built from `native/11.py` with PyInstaller. Download it from itch.io or from this repository's Releases.
 
 ## Course
 
