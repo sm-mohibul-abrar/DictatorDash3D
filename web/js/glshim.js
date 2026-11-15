@@ -3,14 +3,14 @@
  *
  * Why: native/11.py draws with legacy OpenGL (glPushMatrix, glTranslatef, glutSolidCube,
  * glBegin ... glEnd). This file provides functions with the same names so that the drawing
- * code in game.js can stay a line-by-line port of the Python version.
+ * code in game.js can stay close to the Python version.
  *
- * How: every draw call grabs a pooled Three.js object, copies the current matrix / colour /
- * state into it and makes it visible for this frame. Objects not used in a frame are hidden.
- *   - glutSolid*      -> pooled THREE.Mesh with a cached unit geometry
- *   - glBegin/glEnd   -> pooled dynamic BufferGeometry (Mesh, Points or LineSegments)
+ * How: every draw call copies the current matrix / colour / state into a Three.js object.
+ *   - opaque glutSolid*  -> one THREE.InstancedMesh per (shape, lighting, fog). A whole frame of
+ *                           cubes is a single draw call, which is what keeps phones at 60 FPS
+ *   - blended glutSolid* -> pooled THREE.Mesh, drawn in call order like OpenGL would
+ *   - glBegin/glEnd      -> pooled dynamic BufferGeometry (Mesh, Points or LineSegments)
  *   - glEnable(GL_LIGHTING) / GL_FOG / GL_BLEND, glBlendFunc, glDepthMask -> material choice
- *   - renderOrder follows call order, so blending happens in the same order as in OpenGL
  */
 (function (global) {
   'use strict';
@@ -27,6 +27,7 @@
   const M = new THREE.Matrix4();          // current modelview (world space; the camera is separate)
   const stack = [];
   const tmp = new THREE.Matrix4();
+  const tmp2 = new THREE.Matrix4();
   const axis = new THREE.Vector3();
   const st = { light: true, fog: true, blend: false, add: false, depth: true, point: 1 };
   const col = [1, 1, 1, 1];
@@ -54,15 +55,55 @@
     return m;
   }
 
-  // ---- pooled solids
+  // ---- solids
   const geos = {};
   const pools = {};
+  const batches = {};
 
   function geo(key, make) {
     return geos[key] || (geos[key] = make());
   }
 
+  function newBatch(g, lit, fog, cap) {
+    const m = lit ? new THREE.MeshLambertMaterial() : new THREE.MeshBasicMaterial();
+    m.fog = fog;
+    const mesh = new THREE.InstancedMesh(g, m, cap);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.count = 0;
+    scene.add(mesh);
+    return mesh;
+  }
+
+  // opaque solid: append one instance (depth-tested, so draw order does not matter)
+  function instance(key, make, sx, sy, sz) {
+    const k = key + (st.light ? 'L' : 'u') + (st.fog ? 'F' : 'f');
+    let b = batches[k];
+    if (!b) b = batches[k] = { mesh: newBatch(geo(key, make), st.light, st.fog, 64), n: 0, cap: 64 };
+    if (b.n == b.cap) {                             // full: move to a mesh twice the size
+      const old = b.mesh;
+      b.cap *= 2;
+      b.mesh = newBatch(old.geometry, st.light, st.fog, b.cap);
+      b.mesh.instanceMatrix.array.set(old.instanceMatrix.array);
+      b.mesh.instanceColor.array.set(old.instanceColor.array);
+      scene.remove(old);
+      old.material.dispose();
+      old.dispose();
+    }
+    tmp2.copy(M).multiply(tmp.makeScale(sx, sy, sz)).toArray(b.mesh.instanceMatrix.array, b.n * 16);
+    const c = b.mesh.instanceColor.array, i = b.n * 3;
+    c[i] = col[0]; c[i + 1] = col[1]; c[i + 2] = col[2];
+    b.n++;
+  }
+
   function solid(key, make, sx, sy, sz) {
+    if (!st.blend) {
+      instance(key, make, sx, sy, sz);
+      return;
+    }
     const p = pools[key] || (pools[key] = { list: [], used: 0 });
     let o = p.list[p.used];
     if (!o) {
@@ -82,7 +123,7 @@
       o.userData.mats[k] = m;
     }
     m.color.setRGB(col[0], col[1], col[2]);
-    m.opacity = st.blend ? col[3] : 1;
+    m.opacity = col[3];
     o.material = m;
     o.matrix.copy(M).multiply(tmp.makeScale(sx, sy, sz));
     o.matrixWorldNeedsUpdate = true;
@@ -103,9 +144,41 @@
     solid('cone' + sl, () => new THREE.ConeGeometry(1, 1, sl, 1).rotateX(Math.PI / 2).translate(0, 0, 0.5), base, base, h);
   }
 
+  // Not GLUT: a tapered cylinder hanging from the origin (radius r0 at y = 0, r1 at y = -h).
+  // Arms and legs are made of these.
+  function glutSolidLimb(r0, r1, h, sl) {
+    const k = Math.round(r1 / r0 * 10) / 10;
+    solid('limb' + sl + '_' + k, () => new THREE.CylinderGeometry(1, k, 1, sl, 1).translate(0, -0.5, 0), r0, h, r0);
+  }
+
   // GLUT torus lies in the XY plane, like THREE.TorusGeometry
   function glutSolidTorus(inner, outer, sides, rings) {
     solid('tor' + inner + '_' + outer, () => new THREE.TorusGeometry(outer, inner, sides, rings), 1, 1, 1);
+  }
+
+  // Not GL: a textured unit quad in the XY plane (facing +z), scaled to w x h. Used for placards and
+  // the painted crowd. All quads sharing a texture are one instanced draw call.
+  const tquads = {};
+  function glTexQuad(tex, w, h) {
+    let b = tquads[tex.uuid];
+    const make = cap => {
+      const mesh = new THREE.InstancedMesh(geo('plane', () => new THREE.PlaneGeometry(1, 1)),
+                                           new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide }), cap);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false; mesh.matrixAutoUpdate = false; mesh.count = 0;
+      scene.add(mesh);
+      return mesh;
+    };
+    if (!b) b = tquads[tex.uuid] = { mesh: make(16), n: 0, cap: 16 };
+    if (b.n == b.cap) {
+      const old = b.mesh;
+      b.cap *= 2;
+      b.mesh = make(b.cap);
+      b.mesh.instanceMatrix.array.set(old.instanceMatrix.array);
+      scene.remove(old); old.material.dispose(); old.dispose();
+    }
+    tmp2.copy(M).multiply(tmp.makeScale(w, h, 1)).toArray(b.mesh.instanceMatrix.array, b.n * 16);
+    b.n++;
   }
 
   // ---- immediate mode: glBegin / glVertex / glEnd
@@ -169,30 +242,37 @@
     return o;
   }
 
-  function fill(o, idx) {
-    const g = o.geometry, P = g.attributes.position.array, Cc = g.attributes.color.array, N = g.attributes.normal.array;
-    for (let j = 0; j < idx.length; j++) {
-      const i = idx[j];
-      P[j * 3] = vp[i * 3]; P[j * 3 + 1] = vp[i * 3 + 1]; P[j * 3 + 2] = vp[i * 3 + 2];
-      N[j * 3] = vn[i * 3]; N[j * 3 + 1] = vn[i * 3 + 1]; N[j * 3 + 2] = vn[i * 3 + 2];
-      Cc[j * 4] = vc[i * 4]; Cc[j * 4 + 1] = vc[i * 4 + 1]; Cc[j * 4 + 2] = vc[i * 4 + 2]; Cc[j * 4 + 3] = vc[i * 4 + 3];
-    }
-    g.setDrawRange(0, idx.length);
-    g.attributes.position.needsUpdate = g.attributes.color.needsUpdate = g.attributes.normal.needsUpdate = true;
+  // copy vertex i of the glBegin list into slot j of the object's buffers
+  function put(P, N, Cc, j, i) {
+    P[j * 3] = vp[i * 3]; P[j * 3 + 1] = vp[i * 3 + 1]; P[j * 3 + 2] = vp[i * 3 + 2];
+    N[j * 3] = vn[i * 3]; N[j * 3 + 1] = vn[i * 3 + 1]; N[j * 3 + 2] = vn[i * 3 + 2];
+    Cc[j * 4] = vc[i * 4]; Cc[j * 4 + 1] = vc[i * 4 + 1]; Cc[j * 4 + 2] = vc[i * 4 + 2]; Cc[j * 4 + 3] = vc[i * 4 + 3];
   }
 
   function glEnd() {
-    const n = vp.length / 3, idx = [];
+    const n = vp.length / 3;
     if (!n) return;
-    if (prim == C.GL_QUADS) {
-      for (let q = 0; q + 3 < n; q += 4) idx.push(q, q + 1, q + 2, q, q + 2, q + 3);
-    } else if (prim == C.GL_TRIANGLE_FAN) {
-      for (let i = 1; i + 1 < n; i++) idx.push(0, i, i + 1);
-    } else {
-      for (let i = 0; i < n; i++) idx.push(i);
-    }
+    const quads = prim == C.GL_QUADS, fan = prim == C.GL_TRIANGLE_FAN;
+    const count = quads ? Math.floor(n / 4) * 6 : fan ? Math.max(0, n - 2) * 3 : n;
+    if (!count) return;
     const kind = prim == C.GL_POINTS ? 'points' : prim == C.GL_LINES ? 'lines' : 'mesh';
-    fill(dynObj(kind, idx.length), idx);
+    const g = dynObj(kind, count).geometry;
+    const P = g.attributes.position.array, Cc = g.attributes.color.array, N = g.attributes.normal.array;
+    let j = 0;
+    if (quads) {
+      for (let q = 0; q + 3 < n; q += 4) {
+        put(P, N, Cc, j++, q); put(P, N, Cc, j++, q + 1); put(P, N, Cc, j++, q + 2);
+        put(P, N, Cc, j++, q); put(P, N, Cc, j++, q + 2); put(P, N, Cc, j++, q + 3);
+      }
+    } else if (fan) {
+      for (let i = 1; i + 1 < n; i++) {
+        put(P, N, Cc, j++, 0); put(P, N, Cc, j++, i); put(P, N, Cc, j++, i + 1);
+      }
+    } else {
+      for (let i = 0; i < n; i++) put(P, N, Cc, j++, i);
+    }
+    g.setDrawRange(0, count);
+    g.attributes.position.needsUpdate = g.attributes.color.needsUpdate = g.attributes.normal.needsUpdate = true;
   }
 
   // ---- state
@@ -257,6 +337,8 @@
   function beginFrame() {
     for (const k in pools) pools[k].used = 0;
     for (const k in dyn) dyn[k].used = 0;
+    for (const k in batches) batches[k].n = 0;
+    for (const k in tquads) tquads[k].n = 0;
     order = 0;
     M.identity();
     depth = 0;
@@ -266,11 +348,27 @@
   function endFrame() {                             // hide whatever was not drawn this frame
     for (const k in pools) { const p = pools[k]; for (let i = p.used; i < p.list.length; i++) p.list[i].visible = false; }
     for (const k in dyn) { const p = dyn[k]; for (let i = p.used; i < p.list.length; i++) p.list[i].visible = false; }
+    for (const k in batches) {
+      const b = batches[k];
+      b.mesh.count = b.n;
+      b.mesh.visible = b.n > 0;
+      b.mesh.instanceMatrix.needsUpdate = true;
+      b.mesh.instanceColor.needsUpdate = true;
+    }
   }
 
+  const endFrame2 = () => {
+    endFrame();
+    for (const k in tquads) {
+      const b = tquads[k];
+      b.mesh.count = b.n; b.mesh.visible = b.n > 0; b.mesh.instanceMatrix.needsUpdate = true;
+    }
+  };
+
   Object.assign(global, C, {
-    GLShim: { init, beginFrame, endFrame },
-    glutSolidCube, glutSolidSphere, glutSolidCone, glutSolidTorus,
+    GLShim: { init, beginFrame, endFrame: endFrame2 },
+    glTexQuad,
+    glutSolidCube, glutSolidSphere, glutSolidCone, glutSolidTorus, glutSolidLimb,
     glBegin, glVertex3f, glEnd,
     glEnable, glDisable, glBlendFunc, glDepthMask, glPointSize, glLineWidth,
     glColor3f, glColor4f, glNormal3f,

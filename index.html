@@ -2,48 +2,274 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Dictator's Dash 3D</title>
-  <meta name="description" content="Endless 3D lane-runner: a faithful web port of a PyOpenGL / GLUT course project.">
+  <meta name="description" content="An endless 3D runner where the Supreme Leader holds his own Olympics. Disqualify the rivals, let the finish line come to you, and win gold every single time.">
+  <meta name="theme-color" content="#0b0d16">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Dictator's Dash">
+  <meta property="og:title" content="Dictator's Dash 3D">
+  <meta property="og:description" content="The Supreme Leader's own Olympics. Gold is guaranteed.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="assets/action.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="web/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="web/icons/icon-180.png">
   <link rel="stylesheet" href="web/css/style.css">
 </head>
-<body>
-  <!-- 3D world (Three.js, driven by glshim.js) and the 2D HUD drawn on top of it -->
+<body data-state="menu">
+  <!-- 3D world (Three.js, driven by glshim.js), full-screen effects, and a static vignette -->
   <canvas id="c"></canvas>
   <canvas id="hud"></canvas>
+  <div id="vig"></div>
 
-  <!-- Touch controls (phones only). They call the same game actions as the keyboard. -->
+  <!-- ================= in-run HUD ================= -->
+  <div id="ui-hud" hidden>
+    <div class="hud-top">
+      <div class="hud-left">
+        <div class="pill vitals">
+          <div class="bar hp"><i id="hp-fill"></i><span id="hp-text">100</span></div>
+          <div class="fuel-row" id="fuel-row">
+            <div class="bar fuel"><i id="fuel-fill"></i></div>
+            <span id="fuel-text">FLAME</span>
+          </div>
+          <div class="fuel-row" id="stam-row">
+            <div class="bar stam"><i id="stam-fill"></i></div>
+            <span id="stam-text">STAMINA</span>
+          </div>
+        </div>
+        <div id="powerups"></div>
+        <div id="gear"></div>
+      </div>
+      <div class="hud-mid">
+        <div class="pill score"><small>SCORE</small><b id="score">0</b></div>
+        <div id="combo" hidden><b id="combo-x">COMBO x2</b><div class="bar"><i id="combo-fill"></i></div></div>
+        <div id="curve" hidden><span>CURVE</span><i></i><i></i><i></i></div>
+      </div>
+      <div class="hud-right">
+        <button id="btn-pause" class="icon-btn" data-act="pause" aria-label="Pause">
+          <svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
+        </button>
+        <div class="pill wallet">
+          <span class="coin"></span><b id="coins">0</b>
+          <span class="medal"></span><b id="medals">0</b>
+        </div>
+      </div>
+    </div>
+    <div class="pill speed">
+      <div class="bar"><i id="speed-fill"></i><u id="speed-min"></u></div>
+      <span id="speed-text">0 km/h</span>
+    </div>
+    <div id="hint" hidden></div>
+  </div>
+
+  <div id="banner" hidden><b id="banner-t"></b><span id="banner-s"></span></div>
+  <div id="quote" hidden><b id="quote-who">ALADEEN</b><span id="quote-t"></span></div>
+  <div id="toasts"></div>
+  <div id="fps" hidden></div>
+  <div id="loading" hidden>Loading athletes…</div>
+
+  <!-- ================= touch controls (phones, while playing) ================= -->
   <div id="touch-left">
-    <button id="be" class="m-ctrl-btn" aria-label="Faster (E)">
+    <button id="bd" class="m-ctrl-btn" aria-label="Beard of Doom" hidden>
+      <svg viewBox="0 0 24 24"><path d="M12 2l3.5 6v9l3 4h-13l3-4V8z"/><path d="M8.5 12h7"/></svg>
+    </button>
+    <button id="be" class="m-ctrl-btn" aria-label="Faster">
       <svg viewBox="0 0 24 24"><path d="M6 13l6-6 6 6M6 19l6-6 6 6"/></svg>
     </button>
-    <button id="bq" class="m-ctrl-btn" aria-label="Slower (Q)">
+    <button id="bq" class="m-ctrl-btn" aria-label="Slower">
       <svg viewBox="0 0 24 24"><path d="M6 5l6 6 6-6M6 11l6 6 6-6"/></svg>
     </button>
   </div>
-  <!-- right column: utility buttons on top, FLAME at the bottom; one flex column so they never overlap -->
   <div id="touch-right">
-    <div class="m-group">
-      <button id="bp" class="m-ctrl-btn" aria-label="Pause (P)">
-        <svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
-      </button>
-      <button id="bv" class="m-ctrl-btn" aria-label="Camera view (V)">
-        <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
-      </button>
-      <button id="bt" class="m-ctrl-btn" aria-label="Time of day (N)">
-        <svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
-      </button>
-      <button id="bw" class="m-ctrl-btn" aria-label="Weather (M)">
-        <svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 1 1 1-7.9A5 5 0 0 1 17.6 9 3 3 0 1 1 17 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/></svg>
-      </button>
-    </div>
-    <button id="bf" class="m-ctrl-btn" aria-label="Flamethrower (hold, G)">
+    <button id="bv" class="m-ctrl-btn" aria-label="Camera view">
+      <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    </button>
+    <button id="bm" class="m-ctrl-btn" aria-label="Hand missile">
+      <svg viewBox="0 0 24 24"><path d="M12 2l3.5 6v9l3 4h-13l3-4V8z"/></svg>
+    </button>
+    <button id="bf" class="m-ctrl-btn" aria-label="Flamethrower (hold)">
       <svg viewBox="0 0 24 24"><path d="M12 2c1 4 6 6 6 12a6 6 0 0 1-12 0c0-3 1.5-5 3-6 0 2 1 3.5 2.5 4C11 9 10 5 12 2z"/></svg>
     </button>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- ================= main menu ================= -->
+  <section id="s-menu" class="screen">
+    <div class="card menu">
+      <header class="brand">
+        <h1>DICTATOR'S <span>DASH</span></h1>
+        <p id="tagline">The Supreme Leader's own Olympics. Gold is guaranteed.</p>
+        <div class="wallet-row">
+          <span class="chip"><span class="coin"></span><b id="bank">0</b></span>
+          <span class="chip"><span class="medal"></span><b id="total-medals">0</b></span>
+        </div>
+      </header>
+
+      <h2>Difficulty</h2>
+      <div id="diffs" class="segs"></div>
+      <p id="diff-desc" class="desc"></p>
+
+      <h2>Location</h2>
+      <div id="locs" class="locs"></div>
+      <p id="loc-desc" class="desc"></p>
+
+      <div class="env-row">
+        <button class="chip-btn" data-act="tod">Time <b id="env-tod"></b></button>
+        <button class="chip-btn" data-act="weather">Weather <b id="env-wx"></b></button>
+        <button class="chip-btn" data-act="view">Camera <b id="env-view"></b></button>
+      </div>
+
+      <button class="cta" data-act="start">START RUN</button>
+
+      <nav class="nav-row">
+        <button data-act="open" data-m="shop">Athletes</button>
+        <button data-act="open" data-m="nadal">Nuclear Nadal's Lab</button>
+        <button data-act="open" data-m="honours">Honours</button>
+        <button data-act="open" data-m="help">How to play</button>
+        <button data-act="open" data-m="settings">Settings</button>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ================= pause ================= -->
+  <section id="s-pause" class="screen dim" hidden>
+    <div class="card small">
+      <h1 class="title cool">PAUSED</h1>
+      <p class="desc">Take a breath. The finish line will wait for you. It has orders.</p>
+      <div class="env-row">
+        <button class="chip-btn" data-act="tod">Time <b id="env-tod2"></b></button>
+        <button class="chip-btn" data-act="weather">Weather <b id="env-wx2"></b></button>
+        <button class="chip-btn" data-act="view">Camera <b id="env-view2"></b></button>
+      </div>
+      <button class="cta" data-act="resume">RESUME</button>
+      <nav class="nav-row">
+        <button data-act="restart">Restart</button>
+        <button data-act="open" data-m="help">How to play</button>
+        <button data-act="open" data-m="settings">Settings</button>
+        <button data-act="menu">Quit to menu</button>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ================= run over (you always win) ================= -->
+  <section id="s-over" class="screen dim" hidden>
+    <div class="card small">
+      <div class="big-medal"><span>1</span></div>
+      <h1 class="title gold" id="over-title">GOLD MEDAL</h1>
+      <p class="desc" id="over-quip"></p>
+      <div id="over-best" class="best-tag" hidden>NEW PERSONAL BEST</div>
+      <div class="stat-grid" id="over-stats"></div>
+      <button class="cta" data-act="restart">RUN AGAIN</button>
+      <nav class="nav-row">
+        <button data-act="share">Share result</button>
+        <button data-act="open" data-m="shop">Athletes</button>
+        <button data-act="menu">Menu</button>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ================= dialogs ================= -->
+  <section id="m-settings" class="screen modal" hidden>
+    <div class="card small">
+      <header class="m-head"><h1>Settings</h1><button class="icon-btn" data-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+      <div class="row"><span>Graphics<small id="q-note">Auto adapts to this device</small></span>
+        <span class="segs mini" id="q-segs">
+          <button data-act="quality" data-q="auto">Auto</button><button data-act="quality" data-q="low">Low</button>
+          <button data-act="quality" data-q="medium">Medium</button><button data-act="quality" data-q="high">High</button>
+        </span>
+      </div>
+      <label class="row"><span>Music</span><input type="range" id="set-music" min="0" max="1" step="0.05"></label>
+      <label class="row"><span>Sound effects</span><input type="range" id="set-sfx" min="0" max="1" step="0.05"></label>
+      <label class="row"><span>Auto-aim<small>Touch and gamepad</small></span><input type="checkbox" id="set-autoaim" class="tog"></label>
+      <label class="row"><span>Screen shake and flashes</span><input type="checkbox" id="set-shake" class="tog"></label>
+      <label class="row"><span>Vibration</span><input type="checkbox" id="set-haptics" class="tog"></label>
+      <label class="row"><span>Show FPS</span><input type="checkbox" id="set-fps" class="tog"></label>
+      <nav class="nav-row">
+        <button data-act="fullscreen" id="btn-fs">Fullscreen</button>
+        <button data-act="install" id="btn-install" hidden>Install app</button>
+        <button data-act="wipe" class="danger">Reset progress</button>
+      </nav>
+    </div>
+  </section>
+
+  <section id="m-help" class="screen modal" hidden>
+    <div class="card small">
+      <header class="m-head"><h1>How to play</h1><button class="icon-btn" data-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+      <p class="desc left">Run the royal road. Dodge what you can't shoot, shoot what you can. Every 400 m the guards carry a finish tape out to you: break it for a gold medal.</p>
+      <table class="keys">
+        <tr><th></th><th>Phone</th><th>Keyboard and mouse</th><th>Gamepad</th></tr>
+        <tr><td>Change lane</td><td>Swipe left / right</td><td>A / D or arrows</td><td>Stick / D-pad</td></tr>
+        <tr><td>Jump</td><td>Swipe up</td><td>Space, W or up</td><td>A</td></tr>
+        <tr><td>Slide</td><td>Swipe down</td><td>S or down</td><td>B</td></tr>
+        <tr><td>Shoot</td><td>Tap</td><td>Click, or F straight ahead</td><td>X / RB</td></tr>
+        <tr><td>Flamethrower</td><td>Hold the flame button</td><td>Hold G or right mouse</td><td>RT</td></tr>
+        <tr><td>Hand missile, Beard of Doom</td><td>Rocket buttons</td><td>X, C</td><td>LB, Back</td></tr>
+        <tr><td>Speed</td><td>Arrow buttons</td><td>Q / E</td><td></td></tr>
+        <tr><td>Pause</td><td>Pause button</td><td>P or Esc</td><td>Start</td></tr>
+        <tr><td>Camera, time, weather</td><td>Camera button, pause menu</td><td>V, N, M</td><td>Y</td></tr>
+      </table>
+      <ul class="tips">
+        <li><b>Rivals</b> in tracksuits jog ahead of you. Fire and they freeze with their hands up. Shoot them to disqualify them, or go around.</li>
+        <li><b>Democracy</b> is the enemy: robots with placards (VOTE, DEMOCRACY, FREEDOM, EQUAL RIGHTS) march at you and shoot, drones fire ballot papers, and ballot boxes block the lanes.</li>
+        <li><b>Stamina</b>: running faster than cruising pace (the speed buttons, Q / E) drains it. Empty, and he is exhausted for a few seconds.</li>
+        <li><b>Barriers</b>: jump. <b>Beams</b>: slide. <b>Crates</b>: shoot or dodge.</li>
+        <li>Coins, kills and medals build a <b>combo</b> up to x5. Getting hit resets it.</li>
+        <li><b>Pick-ups</b>: VIP pass (blocks one hit), rapid fire, health, and rocket boots (a burst of unstoppable speed).</li>
+        <li><b>Score</b> comes from what you do (coins, medals, enemies, disqualified rivals), never from just running.</li>
+        <li>Coins you bank unlock new <b>Athletes</b> and buy gear at <b>Nuclear Nadal's Lab</b>. The <b>Pointy Hand Missile</b> hunts the nearest enemy and reloads on a timer. The <b>Pointy Beard of Doom</b> charges on kills and medals, then clears the whole track. The <b>Coin Magnet</b> pulls coins to you.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="m-shop" class="screen modal" hidden>
+    <div class="card">
+      <header class="m-head"><h1>Athletes</h1><span class="chip"><span class="coin"></span><b id="shop-bank">0</b></span><button class="icon-btn" data-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+      <div id="shop-grid" class="grid"></div>
+    </div>
+  </section>
+
+  <section id="m-nadal" class="screen modal" hidden>
+    <div class="card small">
+      <header class="m-head"><h1>Nuclear Nadal's Lab</h1><span class="chip"><span class="coin"></span><b id="nadal-bank">0</b></span><button class="icon-btn" data-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+      <p class="desc left" id="nadal-says"></p>
+      <div id="nadal-list"></div>
+    </div>
+  </section>
+
+  <section id="m-honours" class="screen modal" hidden>
+    <div class="card">
+      <header class="m-head"><h1>Honours</h1><button class="icon-btn" data-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+      <div class="stat-grid" id="life-stats"></div>
+      <h2>Achievements <span id="ach-count"></span></h2>
+      <div id="ach-list" class="ach-list"></div>
+    </div>
+  </section>
+
+  <section id="m-share" class="screen modal" hidden>
+    <div class="card small">
+      <header class="m-head"><h1>Share your result</h1><button class="icon-btn" data-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+      <canvas id="share-cv" width="1080" height="1080"></canvas>
+      <label class="row"><span>Name on the card</span><input type="text" id="share-name" maxlength="18" placeholder="Supreme Leader" autocomplete="off"></label>
+      <button class="cta" data-act="share-send" id="btn-share-send">SHARE IMAGE</button>
+      <nav class="nav-row">
+        <button data-act="share-save">Download image</button>
+        <button data-act="share-copy">Copy text</button>
+      </nav>
+    </div>
+  </section>
+
+  <div id="nogl">This game needs WebGL. Please enable hardware acceleration or try another browser.</div>
+  <noscript><div id="nojs">Dictator's Dash 3D needs JavaScript to run.</div></noscript>
+
+  <script src="web/vendor/three.min.js"></script>
+  <script src="web/vendor/GLTFLoader.js"></script>
+  <script src="web/vendor/SkeletonUtils.js"></script>
+  <script src="web/js/core.js"></script>
   <script src="web/js/glshim.js"></script>
+  <script src="web/js/actors.js"></script>
   <script src="web/js/game.js"></script>
+  <script src="web/js/ui.js"></script>
 </body>
 </html>

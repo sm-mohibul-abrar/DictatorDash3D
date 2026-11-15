@@ -1,22 +1,20 @@
 /*
- * DICTATOR'S DASH 3D  v3  -  web port
+ * DICTATOR'S DASH 3D  v4  -  web edition
  *
- * This file is a section-by-section port of native/11.py (the PyOpenGL + GLUT version).
- * Same constants, same class and method names, same numbers, same sounds, same order of
- * operations, so the two versions play identically:
+ * The simulation and the 3D drawing started as a section-by-section port of native/11.py
+ * (the PyOpenGL + GLUT version) and still use its tables, class and method names:
  *
  *   native/11.py                     web (this file)
  *   ------------------------------   ------------------------------------------------
  *   DIFFS, LOCS, PAL, env()          same tables, same env()
- *   class Game  (simulation)         class Game  (line-by-line)
+ *   class Game  (simulation)         class Game, plus the web-only "rigged Olympics" rules:
+ *                                    rival athletes, finish tapes and gold medals
  *   draw_world()  legacy OpenGL      draw_world()  same calls, via glshim.js -> Three.js
- *   draw_hud()    GL ortho 2D        draw_hud()    same layout, via Canvas 2D
- *   GLUT callbacks                   same callbacks, fed by browser events
- *   winsound.Beep                    Web Audio sine beep
+ *   draw_hud()    GL ortho 2D        screen effects on a Canvas 2D layer; menus and HUD are
+ *                                    HTML (ui.js) so they stay readable on phones
+ *   GLUT callbacks                   same callbacks, fed by keyboard, mouse, touch and gamepad
+ *   winsound.Beep                    Web Audio (core.js)
  *   highscore.json                   localStorage (same JSON)
- *
- * Only the platform layer at the bottom is web-specific: browser events and the touch
- * controls for phones, which call the same game actions as the keyboard.
  */
 'use strict';
 
@@ -59,6 +57,25 @@ const WN = ['Clear', 'Rain', 'Snow', 'Sandstorm'];
 const WM = ['Auto'].concat(WN);
 const VN = ['Chase', 'First-person', 'Overhead'];
 
+// ---- web-only rules: the Supreme Leader's own Olympics
+const TAPE_GAP = 400.0;                           // a finish tape is carried out to you this often
+const EVENTS = ['100 m Dash', '200 m Sprint', '400 m Hurdles', '800 m Run', '1500 m Run', 'Marathon'];
+const RIVAL_P = [0.22, 0.30, 0.38];               // chance of a rival athlete per spawn row, by difficulty
+const RIVAL_COLS = [                              // national kit: top, shorts, hair, skin
+  [[0.10, 0.62, 0.28], [0.96, 0.82, 0.14], [0.05, 0.05, 0.05], [0.45, 0.30, 0.20]],
+  [[0.96, 0.96, 0.98], [0.14, 0.30, 0.78], [0.25, 0.15, 0.08], [0.93, 0.76, 0.62]],
+  [[0.86, 0.12, 0.12], [0.96, 0.96, 0.96], [0.08, 0.06, 0.05], [0.86, 0.66, 0.48]],
+  [[0.16, 0.42, 0.92], [0.82, 0.14, 0.14], [0.80, 0.70, 0.40], [0.70, 0.50, 0.36]]
+];
+
+// ---- render detail. apply_quality() copies one tier into Q; 'auto' also scales the resolution (Q.dyn)
+const TIERS = {
+  low: { pr: 1.0, wx: 0.35, rows: 9, sl: 12, sk: 8, glow: false, rig: 0 },   // rig: how many rivals get the detailed model
+  medium: { pr: 1.5, wx: 0.7, rows: 12, sl: 16, sk: 10, glow: true, rig: 2 },
+  high: { pr: 2.0, wx: 1.0, rows: 14, sl: 20, sk: 14, glow: true, rig: 4 }
+};
+const Q = Object.assign({ dyn: 1.0, auto: 'high' }, TIERS.high);
+
 // ------------------------------------------------------------------ difficulty presets
 const DIFFS = [
   { name: 'Easy', col: [0.35, 0.85, 0.50],
@@ -82,6 +99,12 @@ const DIFFS = [
 // tint/tw: sky colour pushed toward 'tint' with weight tw.  night: bias toward the night palette.
 // fog: fog distance multiplier.  curve: how twisty the road is.  wt: weather odds (clear, rain, snow, sand)
 const LOCS = [
+  { name: 'Wadiya Stadium', tag: 'Olympic arena', kind: 'stadium',
+    desc: "The People's Glorious Olympic Stadium. Attendance is mandatory, cheering is enforced.",
+    pv: [0.45, 0.70, 0.96], ground: [0.20, 0.50, 0.24], road: [0.74, 0.22, 0.16],
+    edge: [1.00, 1.00, 1.00], dash: [1.00, 1.00, 1.00], lamp: [1.0, 1.0, 0.9], far: [0.45, 0.52, 0.62],
+    tint: [0.5, 0.7, 1.0], tw: 0.0, night: 0.0, fog: 1.15, curve: 0.7, wt: [7, 1, 0, 0],
+    torch: [1.0, 1.0, 0.9], glow: 0.0, acc: [0.95, 0.75, 0.15] },
   { name: 'Agrabah', tag: 'Desert highway', kind: 'desert',
     desc: 'Golden domes, palms and warm dust. Sandstorms roll in without warning.',
     pv: [0.97, 0.62, 0.35], ground: [0.86, 0.70, 0.45], road: [0.42, 0.10, 0.12],
@@ -172,23 +195,6 @@ function env() {
 }
 
 
-let AC = null;
-function sfx(freq, ms) {                          // native: winsound.Beep(freq, ms) on a thread
-  if (!AC || AC.state !== 'running') return;
-  const t = AC.currentTime, d = ms / 1000;
-  const o = AC.createOscillator(), v = AC.createGain();
-  o.type = 'sine';
-  o.frequency.value = freq;
-  v.gain.setValueAtTime(0, t);
-  v.gain.linearRampToValueAtTime(0.15, t + 0.004);
-  v.gain.setValueAtTime(0.15, t + d - 0.004);
-  v.gain.linearRampToValueAtTime(0, t + d);
-  o.connect(v).connect(AC.destination);
-  o.start(t);
-  o.stop(t + d + 0.01);
-}
-
-
 function load_hi() {
   try {
     const b = JSON.parse(localStorage.getItem(SAVE)).best;
@@ -229,28 +235,50 @@ class Game {
   }
 
   get dd() { return DIFFS[this.di]; }
+  get up() { return Store.d.up || {}; }                        // gadget levels bought from Nadal
+  get mods() { return (SKINS.find(k => k.id == Store.d.skin) || SKINS[0]).mods; }   // this athlete's rule tweaks
   get loc() { return LOCS[this.li]; }
   get hi() { return this.his[this.di]; }
 
   reset() {
     const s = this;
     const prev = s.state === undefined ? 'menu' : s.state;
+    if (prev == 'play' || prev == 'paused') Bus.emit('runend', s.summary(false, false));   // run abandoned
     const d = s.dd;
-    s.state = 'play'; s.time = 0.0; s.speed = d.v0;
+    s.state = 'play'; s.time = 0.0; s.speed = d.v0 * 0.35;        // off the blocks: accelerate up to pace
     s.lane = 2; s.px = 0.0; s.py = 0.0; s.vy = 0.0; s.slide = 0.0;
-    s.hpmax = d.hp;
+    s.hpmax = Math.round(d.hp * (s.mods.hp || 1) * (1 + 0.15 * (s.up.armor || 0)));
     s.health = s.hpmax; s.shield = false; s.rapid = 0.0; s.chain = 0;
     s.score = 0.0; s.coins = 0; s.kills = 0;
     s.invuln = s.shake = s.flash = s.fire_cd = s.phase = 0.0;
     s.obs = []; s.cns = []; s.items = []; s.clones = [];
     s.drones = [];
-    s.pb = []; s.cb = []; s.parts = []; s.flames = [];
+    s.pb = []; s.cb = []; s.parts = []; s.flames = []; s.ms = []; s.booms = [];
     s.target = d.v0; s.fuel = 100.0; s.heat = false; s.fire_on = false;
+    s.rivals = []; s.tapes = []; s.pops = [];
+    s.medals = 0; s.rk = 0; s.maxmult = 1; s.tap_t = 0.0; s.scare = 0.0;
+    s.boost = 0.0; s.cheer = 0.0; s.lean = 0.0; s.talk = 9.0;
+    s.aim_t = 0.0; s.muzzle = 0.0; s.stam = 100.0; s.tired = 0.0; s.chant_t = 22.0;
+    s.hm_cd = 1.5; s.doom = 0.0; s.doom_seen = 0;
     if (prev != 'menu') {
       s.randomize_env();                          // every new run: new time of day / weather
       s.new_track(160);
     }
     s.next_spawn = s.D + 20;
+    s.D0 = s.D;
+    s.next_tape = s.D + TAPE_GAP;
+    s.run_id = (s.run_id || 0) + 1;
+  }
+
+  summary(dead, best) {                           // what the UI needs to know about this run
+    const s = this;
+    return { dead, best, score: Math.trunc(s.score), coins: s.coins, kills: s.kills, rivals: s.rk,
+             medals: s.medals, dist: Math.trunc(s.D - s.D0), time: s.time, mult: s.maxmult,
+             di: s.di, li: s.li, hi: s.hi };
+  }
+
+  pop(x, y, z, text, c) {                         // floating label at a world position
+    this.pops.push({ x, y, z, s: text, c, t: 1.0 });
   }
 
   to_menu() {
@@ -340,15 +368,19 @@ class Game {
 
   jump() {
     if (this.state == 'play' && this.py <= 0.01) {
-      this.vy = 9.0;
+      this.vy = 9.0 * (this.mods.jump || 1);
       this.slide = 0.0;
+      Snd.play('jump');
     }
   }
 
   duck() {
     if (this.state != 'play') return;
     if (this.py > 0.05) this.vy = -14.0;
-    else this.slide = 0.7;
+    else {
+      if (this.slide <= 0) Snd.play('slide');
+      this.slide = 0.7;
+    }
   }
 
   shoot(straight = false) {
@@ -358,7 +390,87 @@ class Game {
       const d = straight ? [0.0, 0.0, -1.0] : s.aim;
       s.pb.push({ x: hx, y: hy, z: hz, dx: d[0] * 50, dy: d[1] * 50, dz: d[2] * 50 });
       s.fire_cd = s.rapid > 0 ? 0.1 : 0.28;
+      s.scare = 1.2; s.aim_t = 0.35; s.muzzle = 0.07;
+      s.parts.push([hx + 0.1, hy, hz + 0.3, 2.5, 3.0, 0.5, 0.5, GOLD]);   // spent casing
+      Bus.emit('shot');                              // gunfire: the rivals freeze
+      Snd.play('shoot');
     }
+  }
+
+  // ---- Nuclear Nadal's Lab: the Pointy Hand Missile and the Pointy Beard of Doom
+  get hm_max() { return 14 - 3 * (this.up.hand || 0); }          // seconds to reload the hand missile
+
+  verdict() { return random.choice(['ELECTION CANCELLED', 'ELECTION POSTPONED', 'ELECTION RIGGED']); }
+
+  threat() {                                      // what a missile chases: the nearest robot or drone, else anything in the way
+    const s = this;
+    let best = null, bz = -70;
+    const see = (o, h) => { if (!o.dead && o.z < -3 && o.z > bz) { bz = o.z; best = { o, h }; } };
+    for (const c of s.clones) see(c, 1.1);
+    for (const dr of s.drones) see(dr, dr.y);
+    if (best) return best;
+    for (const r of s.rivals) see(r, 1.1);
+    for (const o of s.obs) see(o, 0.9);
+    return best;
+  }
+
+  missile() {                                     // leaves his hand and finds its own way
+    const s = this;
+    if (s.state != 'play' || s.hm_cd > 0) return;
+    const [hx, hy, hz] = s.hand;
+    s.ms.push({ k: 'hand', x: hx, y: hy + 0.15, z: hz - 0.4, vx: 0, vy: 6, vz: -20, t: 0, to: s.threat() });
+    s.hm_cd = s.hm_max;
+    s.scare = 1.5; s.aim_t = 0.5;
+    Bus.emit('shot'); Bus.emit('say', 'missile');
+    Snd.play('launch');
+    buzz(30);
+  }
+
+  doom_call() {                                   // the big one is fired from somewhere far behind the stadium
+    const s = this;
+    if (s.state != 'play' || !s.up.beard || s.doom < 1) return;
+    s.doom = 0.0;
+    s.ms.push({ k: 'doom', x: s.px + 10, y: 36, z: 18, vx: 0, vy: -1, vz: -1, t: 0 });
+    s.scare = 3.0;
+    Bus.emit('shot'); Bus.emit('say', 'doom');
+    Snd.play('incoming');
+  }
+
+  blast(x, y, z, R, doom) {                       // everything within R of the explosion is gone
+    const s = this;
+    const near = (ox, oy, oz) => (ox - x) ** 2 + (oy - y) ** 2 + (oz - z) ** 2 < R * R;
+    for (const o of s.obs) {
+      const ox = s.rx(o.x, o.z);
+      if (!o.dead && near(ox, 1, o.z)) {
+        o.dead = true;
+        s.score += 20 * s.mult;
+        s.burst(ox, 1, o.z, [0.7, 0.45, 0.2], 10);
+        if (o.k == 'crate' && !doom) s.pop(ox, 2.4, o.z, s.verdict(), [0.75, 0.88, 1]);
+      }
+    }
+    for (const c of s.clones) {
+      const cx = s.rx(c.x, c.z);
+      if (!c.dead && near(cx, 1.1, c.z)) {
+        c.dead = true;
+        s.kills += 1; s.chain += 1;
+        s.score += 50 * s.mult;
+        s.burst(cx, 1.2, c.z, [0.9, 0.3, 0.1], 16);
+        if (!doom) s.pop(cx, 2.6, c.z, `+${50 * s.mult}`, [1, 0.7, 0.3]);
+      }
+    }
+    for (const dr of s.drones) if (!dr.dead && near(s.rx(dr.x, dr.z), dr.y, dr.z)) s.drone_down(dr);
+    for (const r of s.rivals) if (!r.dead && near(s.rx(r.x, r.z), r.y + 1.1, r.z)) s.rival_out(r, RIVAL_COLS[r.c][0]);
+    for (const b of s.cb) if (near('vx' in b ? b.x : s.rx(b.x, b.z), b.y !== undefined ? b.y : 1.2, b.z)) b.dead = true;
+    for (const c of [[1, 0.55, 0.1], [1, 0.85, 0.3], [0.4, 0.38, 0.36]]) s.burst(x, y + 0.4, z, c, doom ? 40 : 12);
+    s.booms.push({ x, y, z, r: doom ? 24 : R + 1, t: doom ? 1.0 : 0.45, T: doom ? 1.0 : 0.45 });
+    s.shake = Math.max(s.shake, doom ? 0.8 : 0.4);
+    if (doom) {
+      s.bolt = 0.22;                              // the sky goes white
+      s.pop(x, 5, z, 'BEARD OF DOOM', [1, 0.8, 0.3]);
+      s.doom_seen = s.kills + s.rk + 2 * s.medals;   // its own victims do not charge the next one
+    }
+    Snd.play(doom ? 'doom' : 'boom');
+    buzz(doom ? [60, 40, 160] : 50);
   }
 
   burst(x, y, z, c, n = 14) {
@@ -376,22 +488,43 @@ class Game {
     if (s.shield) {
       s.shield = false;
       s.burst(s.px, 1, 0, [0.3, 0.7, 1], 25);
-      sfx(500, 80);
+      Snd.play('block');
+      buzz(20);
       return;
     }
     s.health -= dmg;
     s.chain = 0; s.flash = 0.35;
     s.burst(s.px, 1, 0, [1, 0.2, 0.1], 20);
-    sfx(180, 140);
+    Snd.play('hurt');
+    buzz(60);
+    if (s.health > 0) Bus.emit('say', 'hurt');
     if (s.health <= 0) {
       s.state = 'over';
       s.shake = s.invuln = s.flash = 0.0;         // nothing may shake/blink on the game-over screen
       s.flames = []; s.fire_on = false;
-      if (Math.trunc(s.score) > s.his[s.di]) {
+      const best = Math.trunc(s.score) > s.his[s.di];
+      const sum = s.summary(true, best);          // 'hi' in the summary is the record before this run
+      if (best) {
         s.his[s.di] = Math.trunc(s.score);
         save_hi(s.his);
       }
+      Snd.play('over');
+      buzz([80, 60, 160]);
+      Bus.emit('runend', sum);
     }
+  }
+
+  rival_out(r, c) {                               // a rival athlete is "disqualified"
+    const s = this;
+    r.dead = true;
+    s.rk += 1;
+    s.chain += 1;
+    s.score += 40 * s.mult;
+    const x = s.rx(r.x, r.z);
+    s.burst(x, 1.2, r.z, c, 22);
+    s.pop(x, 2.6, r.z, 'DISQUALIFIED', [1, 0.85, 0.3]);
+    Bus.emit('say', 'cheat');
+    Snd.play('dq');
   }
 
   get vmin() {                                    // minimum speed rises with time
@@ -400,7 +533,7 @@ class Game {
   }
 
   speed_adj(d) {
-    if (this.state == 'play') this.target = Math.max(this.vmin, Math.min(this.dd.vmax, this.target + d));
+    if (this.state == 'play' && this.tired <= 0) this.target = Math.max(this.vmin, Math.min(this.dd.vmax, this.target + d));
   }
 
   cycle_tod() { this.tod = (this.tod + 1) % 4; }
@@ -409,7 +542,7 @@ class Game {
     const s = this;
     const low = s.slide > 0 ? 0.6 : null;
     if (s.view == 1) return [s.px + 0.35, s.py + (low || 1.45), -0.5];
-    return [s.px + 0.5, s.py + (low || 1.25), -0.4];
+    return [s.px + 0.24, s.py + (low || 1.42), -0.62];           // the muzzle, with the pistol arm out
   }
 
   in_cone(x, y, z) {                              // is a point inside the flame cone?
@@ -500,7 +633,8 @@ class Game {
     const x = s.rx(dr.x, dr.z);
     s.burst(x, dr.y, dr.z, [0.5, 0.85, 1.0], 20);
     s.burst(x, dr.y, dr.z, [1.0, 0.6, 0.1], 14);
-    sfx(450, 80);
+    s.pop(x, dr.y + 0.9, dr.z, `+${75 * s.mult}`, [0.6, 0.9, 1.0]);
+    Snd.play('boom');
   }
 
   pause() {
@@ -517,6 +651,10 @@ class Game {
       s.obs.push({ x: (i - 2) * LW, z: z, k: random.choice(['barrier', 'beam', 'crate']) });
     }
     const free = lanes.slice(3).length ? lanes.slice(3) : lanes.slice(-1);
+    if (random.random() < RIVAL_P[s.di] && s.rivals.length < 4) {   // a rival athlete, in an open lane
+      s.rivals.push({ x: (random.choice(free) - 2) * LW, y: 0.0, vy: 0.0, sl: 0.0, fear: 0.0, z: z - 5,
+                      ph: random.uniform(0, 6.28), c: random.randrange(RIVAL_COLS.length) });
+    }
     const cx = (random.choice(free) - 2) * LW;
     const nc = random.randint(3, 6);
     for (let n = 0; n < nc; n++) s.cns.push([cx, z - n * 2.2]);
@@ -525,7 +663,7 @@ class Game {
       s.clones.push({ x: (random.randrange(LANES) - 2) * LW, z: z - 6, cd: random.uniform(0.5, 1.5) });
     } else if (r > 1 - d.item_p) {
       s.items.push({ x: (random.randrange(LANES) - 2) * LW, z: z - 10,
-                     k: random.choice(['shield', 'rapid', 'heal']) });
+                     k: random.choice(['shield', 'rapid', 'heal', 'rocket']) });
     }
     if (s.time > d.drone_t && s.drones.length < d.drone_max &&
         random.random() < Math.min(d.drone_cap, d.drone_p + s.time * 0.003)) {
@@ -551,25 +689,75 @@ class Game {
     if (s.state != 'play') return;
     const d = s.dd, rx = (x, z) => s.rx(x, z);
     s.time += dt;
+    s.tap_t = Math.max(0, s.tap_t - dt);
+    s.scare = Math.max(0, s.scare - dt);
+    s.aim_t = Math.max(0, s.aim_t - dt);
+    s.muzzle = Math.max(0, s.muzzle - dt);
+    s.chant_t -= dt;
+    if (s.chant_t <= 0) {                                        // now and then the crowd chants his name
+      s.chant_t = random.uniform(26, 40);
+      Bus.emit('chant');
+    }
+    s.maxmult = Math.max(s.maxmult, s.mult);
     s.target = Math.max(s.vmin, Math.min(d.vmax, s.target));
+    // stamina: running above cruising pace costs breath; at empty he is spent for a few seconds
+    const push = (s.target - s.vmin) / Math.max(1, d.vmax - s.vmin);
+    if (s.tired > 0) {
+      s.tired -= dt;
+      s.target = s.vmin;
+      if (s.tired <= 0) s.stam = 40.0;
+    } else if (push > 0.05 && s.boost <= 0) {
+      s.stam -= (6 + 22 * push) * dt;
+      if (s.stam <= 0) {
+        s.stam = 0.0; s.tired = 3.2;
+        Snd.play('pant');
+        Bus.emit('say', 'tired');
+      }
+    } else {
+      s.stam = Math.min(100.0, s.stam + 10 * dt);
+    }
     s.speed += (s.target - s.speed) * Math.min(1, 3 * dt);
-    const sp = s.speed;
+    const sp = s.speed * (s.boost > 0 ? 1.5 : 1.0) * (s.tired > 0 ? 0.85 : 1.0);            // rocket boots
     s.D += sp * dt;
     s.update_road(dt);
-    s.score += sp * dt * 0.2 * (sp / 14);
     s.phase += sp * dt * 0.7;
-    s.px += (((s.lane - 2) * LW) - s.px) * Math.min(1, [12, 8, 9, 12][s.weather] * dt);
+    const grip = [12, 8, 9, 12][s.weather] * (s.mods.grip || 1);
+    const vx = ((s.lane - 2) * LW - s.px) * grip;               // sideways speed of this lane change
+    s.px += vx * Math.min(1 / grip, dt);
+    // the runner turns into a lane change instead of sliding sideways: heading = sideways / forward speed
+    s.lean += (Math.max(-0.4, Math.min(0.4, vx / Math.max(sp, 10))) - s.lean) * Math.min(1, 12 * dt);
     if (s.py > 0 || s.vy > 0) {
       s.vy -= 24 * dt;
       s.py = Math.max(0.0, s.py + s.vy * dt);
       if (s.py == 0.0) s.vy = 0.0;
     }
+    if (s.slide > 0 && s.py == 0.0 && random.random() < 0.7) {   // sliding kicks up dust behind the heels
+      s.parts.push([s.px + random.uniform(-0.45, 0.45), 0.08, random.uniform(-0.6, 0.5), random.uniform(-1.2, 1.2),
+                    random.uniform(0.6, 2.2), -sp * 0.75, random.uniform(0.25, 0.5), [0.78, 0.74, 0.68]]);
+    }
     s.slide = Math.max(0, s.slide - dt);
     s.invuln = Math.max(0, s.invuln - dt);
     s.rapid = Math.max(0, s.rapid - dt);
+    s.cheer = Math.max(0, s.cheer - dt);
+    if (s.boost > 0) {                                           // rocket boots: faster, and nothing can stop you
+      s.boost = Math.max(0, s.boost - dt);
+      s.invuln = Math.max(s.invuln, 0.2);
+      for (const sd of [-0.15, 0.15]) {
+        s.flames.push([s.px + sd, s.py + 0.15, 0.35, random.uniform(-0.5, 0.5), random.uniform(-0.6, 0.2), 7, 0.3, 0.3]);
+      }
+    }
+    s.talk -= dt;
+    if (s.talk <= 0) {                                           // now and then the Supreme Leader shares a thought
+      s.talk = random.uniform(13, 20);
+      Bus.emit('say', 'run');
+    }
     s.shake = Math.max(0, s.shake - dt * 1.5);
     s.flash = Math.max(0, s.flash - dt);
     s.fire_cd -= dt;
+    s.hm_cd = Math.max(0, s.hm_cd - dt);
+    const acts = s.kills + s.rk + 2 * s.medals;                  // the Beard of Doom charges on kills, disqualifications and medals
+    if (s.up.beard) s.doom = Math.min(1, s.doom + (acts - s.doom_seen) / (14 - 3 * s.up.beard) + dt / 90);
+    s.doom_seen = acts;
     if (s.D >= s.next_spawn) {
       s.spawn_row();
       s.next_spawn = s.D + Math.max(d.gapmin, d.gap0 - s.time * d.gaps);
@@ -580,6 +768,7 @@ class Game {
     // flamethrower: streams toward the mouse aim
     if (s.heat && s.fuel > 25) s.heat = false;
     if (s.fire_on && !s.heat) {
+      s.scare = Math.max(s.scare, 0.6); s.aim_t = 0.3;
       s.fuel -= 38 * dt;
       if (s.fuel <= 0) { s.fuel = 0.0; s.heat = true; }
       const [hx, hy, hz] = s.hand;
@@ -599,6 +788,7 @@ class Game {
             o.dead = true;
             s.score += 15 * s.mult;
             s.burst(ox, 1, o.z, [1, 0.5, 0.1], 18);
+            if (o.k == 'crate') s.pop(ox, 2.4, o.z, s.verdict(), [0.75, 0.88, 1]);
           }
         }
       }
@@ -613,8 +803,18 @@ class Game {
             s.chain += 1;
             s.score += 50 * s.mult;
             s.burst(cx_, 1.2, c.z, [1, 0.4, 0.1], 26);
+            s.pop(cx_, 2.6, c.z, `+${50 * s.mult}`, [1, 0.7, 0.3]);
             sfx(600, 50);
+            Bus.emit('say', 'demo');
           }
+        }
+      }
+      for (const r of s.rivals) {
+        const rx_ = rx(r.x, r.z);
+        if (!r.dead && s.in_cone(rx_, r.y + 1.1, r.z)) {
+          r.burn = (r.burn || 0) + dt;
+          s.flames.push([rx_ + random.uniform(-0.4, 0.4), r.y + 1.2, r.z, 0, 2.5, 0, 0.4, 0.4]);
+          if (r.burn > 0.35) s.rival_out(r, [1, 0.4, 0.1]);
         }
       }
       for (const dr of s.drones) {
@@ -640,6 +840,7 @@ class Game {
               (rx(o.x, o.z) - b.x) ** 2 + (0.9 - b.y) ** 2 + (o.z - b.z) ** 2 < 1.3) {
             o.dead = b.dead = true;
             s.score += 20 * s.mult;
+            s.pop(rx(o.x, o.z), 2.4, o.z, s.verdict(), [0.75, 0.88, 1]);
             s.burst(rx(o.x, o.z), 1, o.z, [0.7, 0.45, 0.2], 18);
           }
         }
@@ -651,7 +852,16 @@ class Game {
             s.chain += 1;
             s.score += 50 * s.mult;
             s.burst(rx(c.x, c.z), 1.2, c.z, [0.9, 0.1, 0.1], 24);
+            s.pop(rx(c.x, c.z), 2.6, c.z, `+${50 * s.mult}`, [1, 0.7, 0.3]);
             sfx(700, 60);
+            Bus.emit('say', 'demo');
+          }
+        }
+        for (const r of s.rivals) {
+          if (!r.dead &&
+              (rx(r.x, r.z) - b.x) ** 2 + (r.y + 1.1 - b.y) ** 2 + (r.z - b.z) ** 2 < 1.0) {
+            b.dead = true;
+            s.rival_out(r, RIVAL_COLS[r.c][0]);
           }
         }
         for (const dr of s.drones) {
@@ -664,6 +874,36 @@ class Game {
         if (b.dead) break;
       }
       if (b.z < -110 || b.y < 0 || b.y > 40 || Math.abs(b.x) > 60) b.dead = true;
+    }
+
+    // missiles from Nadal's lab
+    for (const m of s.ms) {
+      m.t += dt;
+      if (m.k == 'doom') {                                       // dives in from behind the stadium onto the track ahead
+        if (m.x0 === undefined) { m.x0 = m.x; m.y0 = m.y; m.z0 = m.z; }
+        const T = 1.5, k = Math.min(1, m.t / T) ** 1.7, tx = s.off(-30);
+        m.vx = tx - m.x0; m.vy = -m.y0; m.vz = -30 - m.z0;
+        m.x = m.x0 + m.vx * k; m.y = m.y0 + m.vy * k; m.z = m.z0 + m.vz * k;
+        for (let q = 0; q < 3; q++) {
+          s.flames.push([m.x, m.y + 2, m.z + 2.5, random.uniform(-2, 2), random.uniform(2, 6), random.uniform(2, 8), 0.5, 0.5]);
+        }
+        s.parts.push([m.x, m.y + 2.5, m.z + 3, random.uniform(-1, 1), random.uniform(1, 3), 4, 0.8, [0.8, 0.8, 0.82]]);
+        if (m.t >= T) { m.dead = true; s.blast(tx, 0.5, -30, 70, true); }
+        continue;
+      }
+      if (!m.to || m.to.o.dead) m.to = s.threat();               // the target is gone: pick another
+      const to = m.to;
+      const tx = to ? s.rx(to.o.x, to.o.z) : m.x, ty = to ? to.h : 1.2, tz = to ? to.o.z : m.z - 30;
+      const dx = tx - m.x, dy = ty - m.y, dz = tz - m.z, dist = Math.hypot(dx, dy, dz) || 1;
+      const v = Math.min(48, 22 + 45 * m.t), turn = Math.min(1, 8 * dt);
+      m.vx += (dx / dist * v - m.vx) * turn; m.vy += (dy / dist * v - m.vy) * turn; m.vz += (dz / dist * v - m.vz) * turn;
+      m.x += m.vx * dt; m.y += m.vy * dt; m.z += m.vz * dt;
+      s.flames.push([m.x, m.y, m.z + 0.5, random.uniform(-0.6, 0.6), random.uniform(-0.3, 0.6), 6, 0.22, 0.22]);
+      s.parts.push([m.x, m.y, m.z + 0.6, random.uniform(-0.5, 0.5), random.uniform(0.2, 1.2), 4, random.uniform(0.3, 0.6), [0.82, 0.82, 0.84]]);
+      if ((to && dist < 1.6) || m.y < 0.15 || m.t > 2.5 || (!to && m.z < -42)) {
+        m.dead = true;
+        s.blast(m.x, Math.max(0.6, m.y), m.z, 3.5 + 0.8 * (s.up.hand || 0));
+      }
     }
 
     // obstacles
@@ -683,15 +923,21 @@ class Game {
     }
 
     // coins & items
+    const mg = s.up.magnet || 0;
     for (const c of s.cns) {
       c[1] += sp * dt;
-      if (Math.abs(c[1]) < 1.0 && Math.abs(c[0] - s.px) < 1.0 && s.py < 2.2) {
+      if (mg && c[1] > -(3 + 4 * mg) && c[1] < 2 && Math.abs(c[0] - s.px) < 0.4 + 2.2 * mg) {   // Nadal's magnet reels it in
+        c[0] += (s.px - c[0]) * Math.min(1, 7 * dt);
+        if (c[1] < 0) c[1] = Math.min(0, c[1] + 9 * dt);
+        if (random.random() < 0.3) s.parts.push([s.rx(c[0], c[1]), 1.0, c[1], 0, 1.6, 0, 0.25, GOLD]);
+      }
+      if (Math.abs(c[1]) < 1.0 && Math.abs(c[0] - s.px) < 1.0 && (s.py < 2.2 || mg)) {
         c.push(1);
-        s.coins += 1;
+        s.coins += s.mods.coin || 1;
         s.chain += 1;
         s.score += 10 * s.mult;
         s.burst(c[0], 1, c[1], GOLD, 6);
-        sfx(1300, 30);
+        Snd.play('coin');
       }
     }
     for (const it of s.items) {
@@ -699,22 +945,25 @@ class Game {
       if (Math.abs(it.z) < 1.2 && Math.abs(it.x - s.px) < 1.2) {
         it.dead = true;
         if (it.k == 'shield') s.shield = true;
-        else if (it.k == 'rapid') s.rapid = 8;
-        else s.health = Math.min(s.hpmax, s.health + d.heal);
+        else if (it.k == 'rapid') s.rapid = 8 + 2.5 * (s.up.mag || 0);
+        else if (it.k == 'rocket') s.boost = 4.5 + 1.5 * (s.up.rocket || 0);
+        else { s.health = Math.min(s.hpmax, s.health + d.heal); s.stam = 100.0; }
         s.burst(it.x, 1, it.z, [1, 1, 1], 20);
-        sfx(900, 90);
+        s.pop(it.x, 2.4, it.z, { shield: 'VIP PASS', rapid: 'RAPID FIRE', rocket: 'ROCKET BOOTS', heal: `+${d.heal} HP` }[it.k], [1, 1, 1]);
+        Bus.emit('say', 'power');
+        Snd.play('power');
       }
       if (it.z > 6) it.dead = true;
     }
 
     // clone guards
     for (const c of s.clones) {
-      c.z += sp * 0.55 * dt;
+      c.z += (sp + 4.0) * dt;                     // walking up the track toward you
       if (c.z > -30) c.x += Math.max(-1, Math.min(1, s.px - c.x)) * 1.6 * dt;
       c.cd -= dt;
       if (-60 < c.z && c.z < -8 && c.cd <= 0) {
         s.cb.push({ x: c.x, z: c.z + 1 });
-        c.cd = random.uniform(1.3, 2.2) * d.ecd;
+        c.cd = random.uniform(1.6, 2.6) * d.ecd;
       }
       if (Math.abs(c.z) < 1.2 && Math.abs(c.x - s.px) < 1.2 && !c.dead) {
         c.dead = true;
@@ -766,6 +1015,74 @@ class Game {
       if (dr.z > 6) dr.dead = true;
     }
 
+    // rival athletes: slower runners ahead of you. Shoot them ("disqualified") or go around.
+    // They hop barriers and duck beams, but crates are too much for them. When Aladdin fires,
+    // every rival in earshot stops dead with their hands up until the shooting is over.
+    for (const r of s.rivals) {
+      const afraid = s.scare > 0 && r.z > -55 ? 1.0 : 0.0;
+      r.fear += (afraid - r.fear) * Math.min(1, 9 * dt);
+      r.z += sp * (0.7 + 0.3 * r.fear) * dt;      // 1.0 x your speed = standing still on the road
+      r.ph += sp * 0.5 * (1 - r.fear) * dt;
+      r.sl = Math.max(0, r.sl - dt);
+      if (r.y > 0 || r.vy > 0) {
+        r.vy -= 24 * dt;
+        r.y = Math.max(0.0, r.y + r.vy * dt);
+        if (r.y == 0.0) r.vy = 0.0;
+      }
+      for (const o of s.obs) {
+        const gap = r.z - o.z;                    // obstacles close in on a rival from the far side
+        if (o.dead || r.dead || Math.abs(o.x - r.x) > 1.0 || gap < -1.0 || gap > 4.0) continue;
+        if (o.k == 'barrier') { if (r.y == 0.0 && gap < 3.0) r.vy = 8.0; }
+        else if (o.k == 'beam') r.sl = 0.3;
+        else if (gap < 1.0) {
+          r.dead = true;
+          s.burst(rx(r.x, r.z), 1, r.z, [0.9, 0.9, 0.9], 12);
+        }
+      }
+      if (Math.abs(r.z) < 1.0 && Math.abs(r.x - s.px) < 0.9 && !r.dead &&
+          s.py < r.y + 1.6 && r.y < top) {
+        r.dead = true;
+        s.hurt(12);
+      }
+      if (r.z > 1.5 && !r.passed && !r.dead) {                   // left behind
+        r.passed = true;
+        Bus.emit('say', 'pass');
+      }
+      if (r.z > 6) r.dead = true;
+    }
+
+    // finish tapes: guards carry the finish line out to you, so you always win
+    if (s.D >= s.next_tape) {
+      s.tapes.push({ z: -100.0 });
+      s.next_tape = s.D + TAPE_GAP;
+    }
+    for (const tp of s.tapes) {
+      tp.z += (sp + 5) * dt;
+      if (tp.z >= 0 && !tp.won) {
+        tp.won = true;
+        s.medals += 1;
+        s.chain += 1;
+        s.score += 100 * s.mult;
+        s.health = Math.min(s.hpmax, s.health + 5);
+        for (const c of [GOLD, [1, 1, 1], [1, 0.3, 0.3], [0.3, 0.8, 1]]) {
+          s.burst(s.px + random.uniform(-3, 3), 2.2, -1.5, c, 10);
+        }
+        s.cheer = 1.8;                                            // fists up, crowd on its feet
+        Snd.play('medal');
+        Snd.play('cheer');
+        buzz([30, 40, 60]);
+        Bus.emit('medal', s.medals);
+      }
+      if (tp.z > 8) tp.dead = true;
+    }
+
+    for (const p of s.pops) {
+      p.z += sp * 0.35 * dt;
+      p.y += 1.4 * dt;
+      p.t -= dt;
+    }
+    s.pops = s.pops.filter(p => p.t > 0);
+
     // particles
     for (const p of s.parts) {
       p[0] += p[3] * dt;
@@ -778,11 +1095,13 @@ class Game {
       f[0] += f[3] * dt; f[1] += f[4] * dt; f[2] += f[5] * dt; f[6] -= dt;
     }
     s.flames = s.flames.filter(f => f[6] > 0);
-    for (const name of ['obs', 'items', 'clones', 'drones', 'pb', 'cb']) {
+    for (const name of ['obs', 'items', 'clones', 'drones', 'rivals', 'tapes', 'pb', 'cb', 'ms']) {
       s[name] = s[name].filter(e => !e.dead);
     }
     s.cns = s.cns.filter(c => c.length == 2 && c[1] < 6);
     s.parts = s.parts.filter(p => p[6] > 0);
+    for (const b of s.booms) b.t -= dt;
+    s.booms = s.booms.filter(b => b.t > 0);
   }
 }
 
@@ -808,9 +1127,38 @@ function ball(x, y, z, r, c, sx = 1, sy = 1, sz = 1, glow = false) {
   glPushMatrix();
   glTranslatef(x, y, z);
   glScalef(sx, sy, sz);
-  glutSolidSphere(r, 20, 14);
+  glutSolidSphere(r, Q.sl, Q.sk);
   glPopMatrix();
   if (glow) glEnable(GL_LIGHTING);
+}
+
+
+// Soft additive glows (lamps, shots, pick-ups). Queued in world space during the frame and
+// drawn by draw_glows() as one batch, so twenty glows cost one draw call.
+const GLOWS = [];
+function glow(x, y, z, r, c, a) {
+  if (Q.glow && a > 0.02) GLOWS.push(x, y, z, r, c[0], c[1], c[2], a);
+}
+
+
+function draw_glows() {
+  if (!GLOWS.length) return;
+  glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
+  glBegin(GL_TRIANGLES);
+  for (let i = 0; i < GLOWS.length; i += 8) {
+    const x = GLOWS[i], y = GLOWS[i + 1], z = GLOWS[i + 2], r = GLOWS[i + 3];
+    const cr = GLOWS[i + 4], cg = GLOWS[i + 5], cb = GLOWS[i + 6], a = GLOWS[i + 7];
+    for (let k = 0; k < 10; k++) {
+      const a0 = k * Math.PI / 5, a1 = (k + 1) * Math.PI / 5;
+      glColor4f(cr, cg, cb, a); glVertex3f(x, y, z);
+      glColor4f(cr, cg, cb, 0);
+      glVertex3f(x + Math.cos(a0) * r, y + Math.sin(a0) * r, z);
+      glVertex3f(x + Math.cos(a1) * r, y + Math.sin(a1) * r, z);
+    }
+  }
+  glEnd();
+  glDepthMask(GL_TRUE); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDisable(GL_BLEND);
+  GLOWS.length = 0;
 }
 
 
@@ -851,37 +1199,145 @@ function halo(x, y, z, r, c, a) {                // additive glow billboard
 }
 
 
-function figure(ph, vest, pants, skin, hair, enemy = false) {
-  const sw = Math.sin(ph) * 40;
+// ---- characters
+// Humans (Aladdin and the rival athletes) are built from tapered limbs and ellipsoids with knee
+// and elbow joints, and are posed by blending four poses: running, airborne, hands-up and sliding.
+// Robots (clone guards, tape carriers) are boxes on purpose: stiff, metallic, one glowing visor.
+const SKIN = [0.80, 0.56, 0.38], SHOE = [0.13, 0.13, 0.16];
+const mix = (a, b, k) => a + (b - a) * k;
+
+
+function limb(len, r0, r1, c) {                                  // tapered segment hanging down from the origin
+  glColor3f(...c);
+  glutSolidLimb(r0, r1, len, Q.sl > 12 ? 10 : 7);
+}
+
+
+function human(ph, o, pose) {
+  // o: { vest, pants, hair, skin }   pose: { slide, air, fear } each 0..1, optional bib
+  // Angles are degrees about x: positive swings a hanging limb forward (the figure faces -z).
+  const sl = pose.slide || 0, air = (pose.air || 0) * (1 - sl), fear = (pose.fear || 0) * (1 - sl);
+  const run = 1 - fear;
+  const skin = o.skin || SKIN;
+  const bob = Math.abs(Math.cos(ph)) * 0.05 * run * (1 - air) * (1 - sl);
+  glPushMatrix();
+  glTranslatef(0, mix(0.98 + bob, 0.30, sl), 0);
+
   for (const side of [-1, 1]) {
-    glPushMatrix(); glTranslatef(side * 0.2, 0.9, 0); glRotatef(side * sw, 1, 0, 0);
-    box(0, -0.45, 0, 0.24, 0.9, 0.26, pants); glPopMatrix();
-    glPushMatrix(); glTranslatef(side * 0.5, 1.6, 0); glRotatef(-side * sw, 1, 0, 0);
-    box(0, -0.35, 0, 0.18, 0.75, 0.18, skin); glPopMatrix();
+    const a = ph + (side > 0 ? 0 : Math.PI);                     // the two sides are half a stride apart
+    const lead = side > 0;
+    // legs: thigh swing, knee folds while the leg comes forward
+    let th = 42 * Math.sin(a) * run, kn = -(16 + 58 * Math.max(0, Math.cos(a))) * run - 6 * fear;
+    th = mix(th, lead ? 58 : -18, air); kn = mix(kn, lead ? -85 : -60, air);          // hurdle tuck
+    th = mix(th, lead ? 84 : 120, sl); kn = mix(kn, lead ? -8 : -112, sl);            // one leg out, one knee up
+    glPushMatrix();
+    glTranslatef(side * 0.13, 0, 0);
+    glRotatef(th, 1, 0, 0);
+    limb(0.48, 0.115, 0.085, o.pants);
+    glTranslatef(0, -0.48, 0);
+    ball(0, 0, 0, 0.085, o.pants);
+    glRotatef(kn, 1, 0, 0);
+    limb(0.46, 0.08, 0.055, o.pants);
+    box(0, -0.5, -0.07, 0.13, 0.09, 0.29, SHOE);
+    glPopMatrix();
   }
-  box(0, 1.3, 0, 0.75, 0.75, 0.38, vest);
-  box(0, 0.98, 0, 0.78, 0.14, 0.42, GOLD);
-  ball(0, 1.9, 0, 0.27, skin);
-  ball(0, 1.98, 0.04, 0.3, hair, 1, 0.75, 1);
-  if (enemy) {
-    box(-0.1, 1.92, -0.26, 0.08, 0.06, 0.04, [1, 0, 0]);
-    box(0.1, 1.92, -0.26, 0.08, 0.06, 0.04, [1, 0, 0]);
-    box(0.38, 1.2, -0.45, 0.1, 0.12, 0.7, [0.3, 0.3, 0.3]);
+
+  // upper body leans from the hips: into the run, back into the slide
+  glRotatef(mix(mix(mix(-9, -4, air), 3, fear), 52, sl), 1, 0, 0);
+  ball(0, 0.03, 0, 0.2, o.pants, 1, 0.72, 0.78);                 // hips
+  ball(0, 0.16, 0, 0.19, GOLD, 1.02, 0.3, 0.8);                  // sash
+  ball(0, 0.37, 0, 0.215, o.vest, 1.08, 1.3, 0.74);              // chest
+  if (pose.bib) box(0, 0.4, 0.165, 0.26, 0.24, 0.02, [1, 1, 1]);
+
+  for (const side of [-1, 1]) {
+    const a = ph + (side > 0 ? Math.PI : 0);                     // arms swing against the legs
+    const lead = side > 0;
+    let ar = 40 * Math.sin(a) * run, el = (72 + 14 * Math.sin(a)) * run;
+    ar = mix(ar, lead ? -35 : 140, air); el = mix(el, 35, air);
+    ar = mix(ar, 168, fear); el = mix(el, 22, fear);                                  // hands up
+    ar = mix(ar, lead ? 46 : -88, sl); el = mix(el, lead ? 35 : 6, sl);               // one hand to the ground
+    glPushMatrix();
+    glTranslatef(side * 0.27, 0.56, 0);
+    glRotatef(side * mix(7, 16, fear), 0, 0, 1);
+    glRotatef(ar, 1, 0, 0);
+    ball(0, 0, 0, 0.095, o.vest);
+    limb(0.3, 0.075, 0.06, o.vest);
+    glTranslatef(0, -0.3, 0);
+    ball(0, 0, 0, 0.06, skin);
+    glRotatef(el, 1, 0, 0);
+    limb(0.27, 0.058, 0.045, skin);
+    ball(0, -0.31, 0, 0.062, skin);
+    glPopMatrix();
+  }
+
+  glTranslatef(0, 0.64, 0);
+  glRotatef(mix(4, -34, sl), 1, 0, 0);                           // the head stays up while the body lies back
+  limb(0.12, 0.065, 0.07, skin);                                 // neck (drawn downward from the head)
+  ball(0, 0.2, 0, 0.165, skin, 0.95, 1.14, 1.02);
+  ball(0, 0.26, 0.035, 0.17, o.hair, 1.0, 0.92, 1.04);
+  ball(0, 0.17, -0.165, 0.035, skin);                            // nose
+  for (const sd of [-1, 1]) ball(sd * 0.062, 0.225, -0.148, 0.024, [0.1, 0.07, 0.06]);   // eyes
+  for (const sd of [-1, 1]) ball(sd * 0.158, 0.2, 0.0, 0.04, skin, 0.5, 1, 0.8);     // ears
+  glPopMatrix();
+}
+
+
+function robot(ph, acc, gun) {
+  const sw = Math.sin(ph) * 30;
+  const steel = [0.36, 0.38, 0.44], dark = [0.13, 0.14, 0.18];
+  for (const side of [-1, 1]) {
+    glPushMatrix(); glTranslatef(side * 0.2, 0.94, 0); glRotatef(side * sw, 1, 0, 0);
+    box(0, -0.22, 0, 0.2, 0.46, 0.22, steel);
+    ball(0, -0.47, 0, 0.1, dark);
+    box(0, -0.68, 0, 0.16, 0.4, 0.18, dark);
+    box(0, -0.9, -0.06, 0.22, 0.08, 0.36, steel);
+    glPopMatrix();
+    glPushMatrix(); glTranslatef(side * 0.53, 1.6, 0); glRotatef(-side * sw * 0.7, 1, 0, 0);
+    ball(0, 0, 0, 0.15, dark);
+    box(0, -0.3, 0, 0.15, 0.48, 0.15, steel);
+    box(0, -0.62, 0, 0.19, 0.2, 0.19, dark);
+    glPopMatrix();
+  }
+  box(0, 1.0, 0, 0.46, 0.2, 0.28, dark);                         // waist
+  box(0, 1.36, 0, 0.8, 0.62, 0.42, steel);                       // chest plate
+  box(0, 1.42, -0.22, 0.34, 0.1, 0.02, acc, true);               // chest light
+  box(0, 1.72, 0, 0.16, 0.12, 0.16, dark);                       // neck
+  box(0, 1.95, 0, 0.44, 0.36, 0.4, dark);                        // head
+  box(0, 1.97, -0.205, 0.36, 0.09, 0.02, acc, true);             // visor
+  box(0.15, 2.24, 0, 0.03, 0.24, 0.03, steel);                   // antenna
+  ball(0.15, 2.38, 0, 0.05, acc, 1, 1, 1, true);
+  if (gun) {                                                     // the forces of Democracy: arm cannon and a placard
+    box(0.53, 1.02, -0.4, 0.13, 0.15, 0.75, dark);
+    box(-0.62, 2.0, -0.05, 0.05, 1.5, 0.05, [0.5, 0.42, 0.3]);
+    glPushMatrix(); glTranslatef(-0.62, 2.95, -0.08); glRotatef(180, 0, 1, 0);
+    glColor3f(1, 1, 1); glTexQuad(tex('sign' + (gun - 1) % 4), 1.0, 0.62);
+    glPopMatrix();
   }
 }
 
 
 function draw_player() {
-  if (g.view == 1 || (g.state == 'play' && g.invuln > 0 && Math.trunc(g.t * 20) % 2)) return;
+  if (g.view == 1 || (g.state == 'play' && g.invuln > 0 && g.boost <= 0 && Math.trunc(g.t * 20) % 2)) return;
   shadow(g.px, 0, 0.7 / (1 + g.py * 0.3), 0.4 / (1 + g.py * 0.4));
+  const slide = Math.max(0, Math.min(1, g.slide * 7, (0.72 - g.slide) * 9));   // ease in and out of the slide
   glPushMatrix();
   glTranslatef(g.px, g.py, 0);
-  if (g.slide > 0) {
-    glTranslatef(0, 0.35, 0);
-    glRotatef(-70, 1, 0, 0);
+  const sk = SKINS.find(k => k.id == Store.d.skin) || SKINS[0];
+  const act = Actors.player(sk.model, sk.kit), air = Math.min(1, g.py * 1.6);
+  if (act) {                                                     // the rigged model, once it has loaded
+    const pace = g.speed * (g.boost > 0 ? 1.5 : 1.0);
+    act.show({ x: g.px, y: g.py, z: 0, dt: FDT, slide, air, tint: sk.tint, dir: g.state == 'play' ? g.lean : 0,
+               cheer: Math.min(1, g.cheer * 2.5), tired: Math.min(1, g.tired * 2),
+               aim: g.aim, aimK: g.state == 'play' ? Math.min(1, g.aim_t * 6) : 0,
+               rate: g.state == 'menu' ? 0.6 : Math.max(0.6, Math.min(2.0, pace / 14)) });
+  } else {
+    human(g.phase, sk, { slide, air });
   }
-  figure(g.phase, [0.75, 0.1, 0.15], [0.95, 0.95, 0.9], [0.8, 0.55, 0.35], [0.08, 0.06, 0.05]);
   glPopMatrix();
+  if (g.muzzle > 0) {                                            // muzzle flash
+    const [hx, hy, hz] = g.hand;
+    glow(hx, hy, hz - 0.1, 0.9, [1, 0.85, 0.4], 0.95);
+  }
   if (g.shield) {
     glEnable(GL_BLEND);
     glColor4f(0.3, 0.7, 1, 0.28);
@@ -905,6 +1361,93 @@ function draw_drone(dr) {
     box(0, 0, 0, 1.5, 0.04, 0.12, [0.7, 0.7, 0.75]); glPopMatrix();
   }
   glPopMatrix();
+  glow(x, y, z + 0.5, 0.9, [1, 0.15, 0.1], 0.5);
+}
+
+
+// Sideways drift of the track per unit forward at depth z. Everyone on the road turns to face
+// along it, so on a bend the field runs round the curve instead of pointing straight up the screen.
+function tangent(z) {
+  return (g.off(z - 1) - g.off(z + 1)) / 2;
+}
+const oncoming = z => Math.atan2(tangent(z), -1) * 180 / Math.PI;   // heading (degrees) for something coming at you
+
+
+function draw_clone(c) {                                         // robot guard, facing you
+  const x = c.x + g.off(c.z);
+  shadow(x, c.z, 0.7, 0.35);
+  glPushMatrix(); glTranslatef(x, 0, c.z); glRotatef(oncoming(c.z), 0, 1, 0);
+  if (c.sg === undefined) c.sg = random.randrange(4);           // each robot carries its own slogan
+  robot(g.t * 8, [1, 0.12, 0.1], 1 + c.sg);
+  glPopMatrix();
+  glow(x, 1.97, c.z + 0.3, 0.8, [1, 0.15, 0.1], 0.45);
+}
+
+
+let TAPE_ID = 0, RIGGED = 0;                                    // RIGGED: detailed rivals drawn so far this frame
+const SUIT = { top: [0.1, 0.1, 0.13], bottom: [0.1, 0.1, 0.13], shoes: [0.25, 0.25, 0.28] };
+
+
+function draw_rival(r) {                                         // athlete seen from behind, bib on the back
+  const x = r.x + g.off(r.z), c = RIVAL_COLS[r.c];
+  shadow(x, r.z, 0.7 / (1 + r.y * 0.3), 0.35 / (1 + r.y * 0.4));
+  const pose = { slide: Math.min(1, r.sl * 8), air: Math.min(1, r.y * 1.6), fear: r.fear, bib: true };
+  const act = RIGGED < Q.rig ? Actors.rival(r, 'man') : null;   // phones give only the nearest few the detailed model
+  if (act) {
+    RIGGED++;                                                     // team colours on the kit, never on the skin
+    act.show({ x, y: r.y, z: r.z, dt: FDT, rate: 0.85 * (1 - r.fear), dir: tangent(r.z),
+               tint: { top: c[0], bottom: c[1], shoes: [1.6, 1.6, 1.7] }, ...pose });
+    return;
+  }
+  glPushMatrix();
+  glTranslatef(x, r.y, r.z);
+  glRotatef(-Math.atan(tangent(r.z)) * 180 / Math.PI, 0, 1, 0);
+  human(r.ph, { vest: c[0], pants: c[1], hair: c[2], skin: c[3] }, pose);
+  glPopMatrix();
+}
+
+
+function draw_tape(tp) {                                         // two of his officials jog the finish line out to you
+  const z = tp.z, o = g.off(z);
+  tp.id = tp.id || ++TAPE_ID;
+  for (const sd of [-1, 1]) {
+    const x = o + sd * 5.4;
+    shadow(x, z, 0.7, 0.35);
+    const a = Q.rig ? Actors.cast('tape' + tp.id + sd, 'man', 'official') : null;
+    if (a) {
+      a.show({ x, y: 0, z, dt: FDT, rate: 0.9, yaw: Math.atan2(-tangent(z), 1), tint: SUIT });
+      continue;
+    }
+    glPushMatrix(); glTranslatef(x, 0, z); glRotatef(oncoming(z), 0, 1, 0);
+    human(g.t * 9, { vest: SUIT.top, pants: SUIT.top, hair: [0.05, 0.05, 0.05] }, {});
+    glPopMatrix();
+  }
+  if (tp.won) return;                                            // you broke the tape
+  box(o, 1.2, z, 10.4, 0.16, 0.04, [1, 1, 1], true);
+  box(o, 1.2, z + 0.03, 10.4, 0.05, 0.04, GOLD, true);
+  for (const sd of [-1, 0, 1]) glow(o + sd * 3.4, 1.2, z + 0.1, 1.6, GOLD, 0.3);
+}
+
+
+function draw_missile(m) {                                       // orange, with fins, and above all pointy
+  const s = m.k == 'doom' ? 5.0 : 0.5, OR = [0.96, 0.47, 0.1], DK = [0.1, 0.27, 0.24];
+  glPushMatrix(); glTranslatef(m.x, m.y, m.z);
+  glRotatef(Math.atan2(-m.vx, -m.vz) * 180 / Math.PI, 0, 1, 0);
+  glRotatef(Math.atan2(m.vy, Math.hypot(m.vx, m.vz)) * 180 / Math.PI, 1, 0, 0);
+  glScalef(s, s, s);
+  const tube = (z, r0, r1, len, c) => {                          // a cylinder along the body, from z toward the nose
+    glPushMatrix(); glTranslatef(0, 0, z); glRotatef(90, 1, 0, 0); glColor3f(...c); glutSolidLimb(r0, r1, len, 12); glPopMatrix();
+  };
+  tube(0.9, 0.16, 0.16, 1.5, OR);                                // body
+  tube(0.3, 0.168, 0.168, 0.12, DK); tube(-0.4, 0.168, 0.168, 0.1, DK);   // the two dark bands
+  tube(1.08, 0.09, 0.15, 0.18, [0.12, 0.12, 0.14]);              // nozzle
+  glPushMatrix(); glTranslatef(0, 0, -0.6); glRotatef(180, 0, 1, 0); glColor3f(...OR); glutSolidCone(0.16, 0.8, 12); glPopMatrix();   // the point
+  for (const [fx, fy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    box(fx * 0.25, fy * 0.25, 0.72, fx ? 0.22 : 0.03, fy ? 0.22 : 0.03, 0.42, DK);
+  }
+  glPopMatrix();
+  const n = Math.hypot(m.vx, m.vy, m.vz) || 1, back = s * 1.2;
+  glow(m.x - m.vx / n * back, m.y - m.vy / n * back, m.z - m.vz / n * back, 1.6 * s + 0.6, [1, 0.6, 0.2], 0.7);
 }
 
 
@@ -918,17 +1461,20 @@ function draw_obstacle(o) {
     box(x, 1.65, z, 2.1, 1.1, 0.5, [0.7, 0.2, 0.1]);
     box(x, 1.65, z, 2.15, 0.2, 0.55, GOLD);
   } else {
-    box(x, 0.9, z, 1.7, 1.8, 1.2, [0.55, 0.36, 0.18]);
-    box(x, 0.9, z, 1.75, 0.2, 1.25, [0.3, 0.18, 0.08]);
-    box(x, 0.9, z, 0.2, 1.85, 1.25, [0.3, 0.18, 0.08]);
+    box(x, 0.9, z, 1.7, 1.8, 1.2, [0.93, 0.93, 0.96]);           // a ballot box
+    box(x, 1.83, z, 1.78, 0.14, 1.28, [0.12, 0.3, 0.7]);
+    box(x, 1.91, z, 0.7, 0.03, 0.12, [0.03, 0.03, 0.05]);
+    glPushMatrix(); glTranslatef(x, 0.95, z + 0.61); glColor3f(1, 1, 1); glTexQuad(tex('ballot'), 1.4, 0.8); glPopMatrix();
   }
 }
 
 
 // ---- location scenery
-function lamp(side, z, c) {
+function lamp(side, z, c, e) {
   box(side * 5.9, 1.2, z, 0.1, 2.4, 0.1, [0.2, 0.15, 0.1]);
   ball(side * 5.9, 2.5, z, 0.22, c, 1, 1, 1, true);
+  // lamps bloom after dark (and always in Neon City); the glow thins out into the fog
+  glow(side * 5.9 + g.off(z), 2.5, z, 1.5, c, 0.5 * Math.max(e.night, g.loc.glow) * Math.max(0, 1 + z / e.fe));
 }
 
 
@@ -1008,7 +1554,124 @@ function scn_forest(side, h, j, z, e) {
 }
 
 
-const SCN = { desert: scn_desert, city: scn_city, snow: scn_snow, forest: scn_forest };
+const CROWD = [[0.85, 0.2, 0.2], [0.95, 0.75, 0.15], [0.2, 0.5, 0.9], [0.95, 0.95, 0.95], [0.2, 0.65, 0.35], [0.6, 0.3, 0.7]];
+const FACES = [[0.93, 0.76, 0.62], [0.80, 0.56, 0.38], [0.60, 0.42, 0.28], [0.42, 0.28, 0.18]];
+const BOARDS = [GOLD, [0.75, 0.1, 0.1], [0.95, 0.95, 0.95], [0.1, 0.45, 0.25]];
+
+// ---- pictures painted once onto a canvas and used as textures (placards, ballot boxes, the crowd)
+const TEX = {};
+function tex(name) {
+  if (TEX[name]) return TEX[name];
+  const [w, h, paint] = PAINT[name];
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  paint(cv.getContext('2d'), w, h);
+  return (TEX[name] = new THREE.CanvasTexture(cv));
+}
+const rgb = c => `rgb(${c.map(v => Math.round(v * 255)).join(',')})`;
+// the stands: one row of seated spectators, a still picture (two versions, so neighbouring rows differ)
+const seats = seed0 => [512, 68, (c, w, h) => {
+  let seed = seed0;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const pick = a => rgb(a[Math.floor(rnd() * a.length)]);
+  c.fillStyle = '#2c2f3c'; c.fillRect(0, 0, w, h);                // the step behind them
+  for (let x = 13; x < w - 8; x += 23.2) {
+    const up = Math.round(rnd() * 3), shirt = pick(CROWD), skin = pick(FACES);
+    c.fillStyle = '#17603f'; c.fillRect(x - 10, 22, 20, 30);      // seat back
+    c.fillStyle = shirt;
+    c.fillRect(x - 8, 27 - up, 16, 22);                           // an upright torso
+    c.beginPath(); c.arc(x, 28 - up, 8, 3.14, 6.29); c.fill();    // shoulders
+    c.fillRect(x - 11, 27 - up, 4, 17); c.fillRect(x + 7, 27 - up, 4, 17);   // arms down to the lap
+    c.fillStyle = skin;
+    c.fillRect(x - 2.5, 16 - up, 5, 6);                           // neck
+    c.beginPath(); c.arc(x, 12 - up, 6.5, 0, 6.3); c.fill();      // head
+    c.fillRect(x - 10, 43 - up, 7, 4); c.fillRect(x + 3, 43 - up, 7, 4);     // hands on the knees
+    c.fillStyle = '#1a1310'; c.beginPath(); c.arc(x, 10.5 - up, 6.7, 3.25, 6.17); c.fill();   // hair
+    c.fillStyle = '#262a40';
+    c.fillRect(x - 9, 47, 7.5, 8); c.fillRect(x + 1.5, 47, 7.5, 8);          // thighs, seen end-on
+    c.fillRect(x - 8, 55, 6, 10); c.fillRect(x + 2, 55, 6, 10);              // shins
+    if (rnd() < 0.1) {                                            // a little Wadiyan flag
+      c.fillStyle = '#dddddd'; c.fillRect(x + 9, 5, 1.5, 24);
+      c.fillStyle = '#128a48'; c.fillRect(x + 10.5, 5, 12, 8);
+      c.fillStyle = '#f2bf26'; c.fillRect(x + 10.5, 8, 12, 2);
+    }
+  }
+  c.fillStyle = '#62657a'; c.fillRect(0, h - 3, w, 3);            // the lip of the step
+}];
+const PAINT = {
+  ballot: [256, 144, (c, w, h) => {
+    c.fillStyle = '#f4f4f8'; c.fillRect(0, 0, w, h);
+    c.fillStyle = '#1f4fb4'; c.font = '900 50px Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('BALLOT', w / 2, 52);
+    c.font = '700 26px Arial, sans-serif'; c.fillText('DEMOCRACY INSIDE', w / 2, 104);
+  }],
+  seats0: seats(7), seats1: seats(1234),
+  // the Supreme Leader, larger than life, on the back wall
+  banner: [256, 288, (c, w, h) => {
+    c.fillStyle = '#128a48'; c.fillRect(0, 0, w, h);
+    c.strokeStyle = '#f2bf26'; c.lineWidth = 10; c.strokeRect(5, 5, w - 10, h - 10);
+    c.fillStyle = '#f4f4ee'; c.beginPath(); c.ellipse(128, 262, 96, 70, 0, 3.14, 6.29); c.fill();   // uniform
+    c.fillStyle = '#f2bf26'; c.fillRect(34, 196, 44, 14); c.fillRect(178, 196, 44, 14);            // epaulettes
+    c.fillStyle = '#c98d5c'; c.beginPath(); c.ellipse(128, 118, 44, 54, 0, 0, 6.29); c.fill();     // face
+    c.fillStyle = '#120d0a';
+    c.beginPath(); c.ellipse(128, 70, 62, 44, 0, 0, 6.29); c.fill();                               // hair
+    c.beginPath(); c.ellipse(128, 160, 46, 40, 0, 0, 6.29); c.fill();                              // beard
+    c.fillStyle = '#c98d5c'; c.beginPath(); c.ellipse(128, 112, 40, 28, 0, 0, 6.29); c.fill();
+    c.fillStyle = '#0a0a0c'; c.fillRect(88, 100, 34, 18); c.fillRect(134, 100, 34, 18); c.fillRect(120, 104, 16, 4);   // sunglasses
+    c.fillStyle = '#f2bf26'; c.font = '900 30px Arial, sans-serif'; c.textAlign = 'center'; c.fillText('ALADEEN', 128, 276);
+  }]
+};
+
+
+// placards for the forces of Democracy, one slogan each
+const SIGNS = [['VOTE', '#1f4fb4'], ['DEMOCRACY', '#b4261f'], ['FREEDOM', '#1b7a3c'], ['EQUAL RIGHTS', '#6a2c91']];
+SIGNS.forEach(([words, col], i) => {
+  PAINT['sign' + i] = [256, 160, (c, w, h) => {
+    c.fillStyle = '#fff'; c.fillRect(0, 0, w, h);
+    c.strokeStyle = col; c.lineWidth = 12; c.strokeRect(6, 6, w - 12, h - 12);
+    c.fillStyle = col; c.textAlign = 'center'; c.textBaseline = 'middle';
+    const lines = words.split(' ');
+    let px = lines.length > 1 ? 66 : 100;
+    do { px -= 4; c.font = `900 ${px}px Arial, sans-serif`; } while (lines.some(t => c.measureText(t).width > w - 40));
+    lines.forEach((t, k) => c.fillText(t, w / 2, h / 2 + 5 + (k - (lines.length - 1) / 2) * (px + 10)));
+  }];
+});
+
+
+function scn_stadium(side, h, j, z, e) {
+  // five terraces, each with one upright painted row of seated spectators: nothing in the stands moves
+  for (let i = 0; i < 5; i++) {
+    const x0 = 8.2 + i * 1.65, y = 1.0 + i * 1.3;
+    box(side * (x0 + 16.65) / 2, y / 2, z, 16.65 - x0, y, 12, i % 2 ? [0.44, 0.46, 0.54] : [0.5, 0.52, 0.6]);
+    glPushMatrix(); glTranslatef(side * (x0 + 1.0), y + 0.8, z); glRotatef(-side * 90, 0, 1, 0);
+    glColor3f(1, 1, 1); glTexQuad(tex('seats' + ((i + j) & 1)), 12, 1.6);
+    glPopMatrix();
+  }
+  box(side * 16.9, 5.5, z, 0.5, 11, 12, [0.26, 0.28, 0.36]);     // back wall, with a portrait on every other section
+  if (pymod(j, 4) == 0) {
+    glPushMatrix(); glTranslatef(side * 16.6, 9.2, z); glRotatef(-side * 90, 0, 1, 0);
+    glColor3f(1, 1, 1); glTexQuad(tex('banner'), 3.0, 3.3);
+    glPopMatrix();
+  } else if (pymod(j, 4) == 2) {
+    box(side * 16.6, 9.2, z, 0.1, 2.0, 7.5, [0.1, 0.45, 0.25], true);
+  }
+  box(side * 6.9, 0.45, z, 0.16, 0.9, 11.7, BOARDS[pymod(j + (side > 0 ? 2 : 0), 4)]);   // trackside boards
+  if (pymod(j, 2)) {                                             // flags of Wadiya
+    box(side * 7.6, 2.3, z + 3, 0.08, 4.6, 0.08, [0.75, 0.75, 0.78]);
+    glPushMatrix(); glTranslatef(side * 7.6, 4.0, z + 3); glRotatef(Math.sin(g.t * 3 + j) * 20, 0, 1, 0);
+    box(0, 0, 0.6, 0.04, 0.8, 1.2, [0.1, 0.5, 0.28]);
+    box(0, 0, 0.6, 0.05, 0.28, 1.2, GOLD);
+    glPopMatrix();
+  }
+  if (pymod(j, 4) == 0) {                                        // floodlight towers
+    box(side * 17.6, 7.5, z, 0.4, 15, 0.4, [0.2, 0.2, 0.25]);
+    box(side * 17.0, 15, z, 2.4, 1.3, 0.5, [1, 1, 0.88], true);
+    glow(side * 17.0 + g.off(z), 15, z, 5, [1, 1, 0.85], (0.25 + 0.5 * e.night) * Math.max(0, 1 + z / e.fe));
+  }
+}
+
+
+const SCN = { stadium: scn_stadium, desert: scn_desert, city: scn_city, snow: scn_snow, forest: scn_forest };
 
 
 function draw_road() {
@@ -1072,7 +1735,7 @@ function draw_scenery(e) {
   draw_road();
   const fn = SCN[L.kind];
   const j0 = Math.floor(D / 12) - 1;
-  for (let j = j0; j < j0 + 14; j++) {
+  for (let j = j0; j < j0 + Q.rows; j++) {
     const z = D - j * 12;
     glPushMatrix();
     glTranslatef(g.off(z), 0, 0);
@@ -1082,7 +1745,7 @@ function draw_scenery(e) {
       if (pymod(j, 2) == 0) {
         let lc = L.lamp;
         if (L.kind == 'city' && pymod(j, 4) == 0) lc = [1.0, 0.3, 0.85];
-        lamp(side, z, lc);
+        lamp(side, z, lc, e);
       }
     }
     glPopMatrix();
@@ -1217,12 +1880,24 @@ function compute_aim() {
 
 
 // ---- Three.js objects behind the shim (native: the GLUT window + its GL context)
-const MSAA = /[?&]msaa\b/.test(location.search);  // native: python 11.py --msaa
-const ren = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: MSAA, alpha: true });
+// Anti-aliasing is fixed when the GL context is created, so it follows the quality setting at load:
+// always on High, on for Auto / Medium unless the screen is already high-DPI, off on Low.
+const MSAA = /[?&]msaa\b/.test(location.search) || SET.quality == 'high' ||
+             (SET.quality != 'low' && (devicePixelRatio || 1) < 2);
+let ren;
+try {
+  ren = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: MSAA, alpha: true,
+                                  powerPreference: 'high-performance' });
+} catch (e) {
+  document.body.classList.add('nogl');                           // style.css shows the "needs WebGL" notice
+  throw e;
+}
 ren.setClearColor(0x000000, 0);
 const scene = new THREE.Scene();
 const cam = new THREE.PerspectiveCamera(58, 1, 0.3, 260);
 GLShim.init(scene);
+Actors.init(scene);
+let FDT = 0.0;                                                   // this frame's animation time step (0 while paused)
 
 let skyCss = '';
 function sky_gradient(e) {                                       // screen-space gradient behind the world
@@ -1240,12 +1915,12 @@ function draw_world() {
   cam.fov = fit_fov(fov);                                        // FOV widens with speed
   cam.aspect = WIN[0] / WIN[1];
   cam.updateProjectionMatrix();
-  const sh = g.state == 'play' ? g.shake * 0.8 : 0.0;           // no shake on pause / game over
+  const sh = g.state == 'play' && SET.shake ? g.shake * 0.8 : 0.0;   // no shake on pause / game over
   const jx = random.uniform(-sh, sh), jy = random.uniform(-sh, sh) * 0.5;
   cam.position.set(eye[0] + jx, eye[1] + jy, eye[2]);
   cam.up.set(Math.sin(g.roll), Math.cos(g.roll), 0);             // banks into bends
   cam.lookAt(ctr[0], ctr[1], ctr[2]);
-  g.aim = compute_aim();
+  g.aim = aim_now();
   glFog(e.sky, e.fs, e.fe);
   glLightModelAmbient(e.amb);
   glLight0(e.dif, [0.4, 1.0, 0.5]);
@@ -1254,6 +1929,8 @@ function draw_world() {
   glLight1([t * tc[0], t * tc[1], t * tc[2]], [g.px, 3.0, 2.0]);  // torch / flame / neon light
 
   GLShim.beginFrame();
+  Actors.begin();
+  RIGGED = 0;
   glDisable(GL_LIGHTING); glDisable(GL_FOG);                     // sky bodies + far backdrop
   if (e.stars > 0.05) {
     glPointSize(2);
@@ -1279,39 +1956,61 @@ function draw_world() {
     glColor3f(...GOLD); glutSolidSphere(0.35, 16, 12); glPopMatrix();
   }
   for (const it of g.items) {
-    const c = { shield: [0.3, 0.7, 1], rapid: [1, 0.5, 0.1], heal: [0.2, 0.9, 0.3] }[it.k];
+    const c = { shield: [0.3, 0.7, 1], rapid: [1, 0.5, 0.1], heal: [0.2, 0.9, 0.3], rocket: [1, 0.3, 0.9] }[it.k];
     glPushMatrix(); glTranslatef(it.x + g.off(it.z), 1.1 + 0.2 * Math.sin(g.t * 3), it.z);
     glRotatef(g.t * 120, 0, 1, 0);
     ball(0, 0, 0, 0.35, c);
     glRotatef(70, 1, 0, 0); glColor3f(1, 1, 1); glutSolidTorus(0.05, 0.6, 8, 20);
     glPopMatrix();
+    glow(it.x + g.off(it.z), 1.1, it.z, 1.4, c, 0.4);
   }
-  for (const c of g.clones) {
-    const cxx = c.x + g.off(c.z);
-    shadow(cxx, c.z, 0.7, 0.35);
-    glPushMatrix(); glTranslatef(cxx, 0, c.z); glRotatef(180, 0, 1, 0);
-    figure(g.t * 8, [0.12, 0.12, 0.15], [0.05, 0.05, 0.07], [0.5, 0.4, 0.35], [0, 0, 0], true);
-    glPopMatrix();
-  }
+  for (const r of g.rivals) draw_rival(r);
+  for (const tp of g.tapes) draw_tape(tp);
+  for (const c of g.clones) draw_clone(c);
   for (const dr of g.drones) draw_drone(dr);
   draw_player();
+  for (const m of g.ms) draw_missile(m);
+  for (const b of g.booms) {                                     // fireballs
+    const k = 1 - b.t / b.T;
+    glow(b.x, b.y + 0.5, b.z, b.r * (0.3 + 0.7 * k), [1, 0.55, 0.15], 0.95 * (1 - k));
+    glow(b.x, b.y + 0.5, b.z, b.r * 0.5 * (0.3 + 0.7 * k), [1, 1, 0.8], 1 - k);
+  }
 
   glDisable(GL_LIGHTING); glDisable(GL_FOG);                     // unlit effects
-  for (const b of g.pb) {
-    glColor3f(1, 1, 0.3); glPushMatrix(); glTranslatef(b.x, b.y, b.z); glutSolidSphere(0.18, 10, 8); glPopMatrix();
+  if (g.pb.length) {                                             // tracers: a bright streak behind each bullet
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
+    glBegin(GL_QUADS);
+    for (const b of g.pb) {
+      const n = Math.hypot(b.dx, b.dy, b.dz) || 1, L = Math.min(2.8, Math.abs(b.z + 0.62) + 0.2);
+      const tx = b.x - b.dx / n * L, ty = b.y - b.dy / n * L, tz = b.z - b.dz / n * L;
+      for (const [wx, wy] of [[0.07, 0], [0, 0.07]]) {           // two crossed ribbons, so it shows from any side
+        glColor4f(1, 0.95, 0.6, 1); glVertex3f(b.x - wx, b.y - wy, b.z); glVertex3f(b.x + wx, b.y + wy, b.z);
+        glColor4f(1, 0.7, 0.2, 0); glVertex3f(tx + wx, ty + wy, tz); glVertex3f(tx - wx, ty - wy, tz);
+      }
+    }
+    glEnd();
+    glDepthMask(GL_TRUE); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDisable(GL_BLEND);
   }
   for (const b of g.cb) {
-    glColor3f(...('vx' in b ? [1, 0.2, 0.9] : [1, 0.15, 0.1]));
-    const bx_ = 'vx' in b ? b.x : b.x + g.off(b.z);
-    glPushMatrix(); glTranslatef(bx_, b.y !== undefined ? b.y : 1.2, b.z); glutSolidSphere(0.25, 10, 8); glPopMatrix();
+    const bx_ = 'vx' in b ? b.x : b.x + g.off(b.z), by_ = b.y !== undefined ? b.y : 1.2;
+    if ('vx' in b) {                                             // a drone's shot is a spinning ballot paper
+      glPushMatrix(); glTranslatef(bx_, by_, b.z); glRotatef(g.t * 500, 1, 0.4, 0);
+      box(0, 0, 0, 0.42, 0.3, 0.03, [0.97, 0.97, 1.0]);
+      glPopMatrix();
+    } else {
+      glColor3f(1, 0.15, 0.1);
+      glPushMatrix(); glTranslatef(bx_, by_, b.z); glutSolidSphere(0.25, 10, 8); glPopMatrix();
+    }
+    glow(bx_, b.y !== undefined ? b.y : 1.2, b.z, 0.9, [1, 0.2, 0.3], 0.55);
   }
+  draw_glows();
   glPointSize(5);
   glBegin(GL_POINTS);
   for (const p of g.parts) {
     glColor3f(...p[7]); glVertex3f(p[0], p[1], p[2]);
   }
   glEnd();
-  const wl = g.wx.slice(0, Math.trunc(g.wx.length * g.wk));
+  const wl = g.wx.slice(0, Math.trunc(g.wx.length * g.wk * Q.wx));
   if (wl.length) {                                               // weather
     if (g.weather == 1) {
       glColor3f(0.7, 0.8, 1);
@@ -1344,341 +2043,177 @@ function draw_world() {
   }
   glEnable(GL_LIGHTING); glEnable(GL_FOG);
   GLShim.endFrame();
+  Actors.end();
   ren.render(scene, cam);
 }
 
 
-// ------------------------------------------------------------------------ HUD
-// Native draws the HUD with gluOrtho2D (origin bottom-left, 1 unit = 1 pixel). Here the same
-// functions draw on a Canvas 2D layer; Y() flips the y axis. On screens smaller than the
-// native layout the HUD is scaled down by HS so the menu still fits.
-const H10 = '10px Helvetica, Arial, sans-serif', H12 = '12px Helvetica, Arial, sans-serif';
-const H18 = '18px Helvetica, Arial, sans-serif', T24 = '24px "Times New Roman", Times, serif';
-const DARK = [0.04, 0.05, 0.09];
-const DIM = [0.62, 0.66, 0.76];
-const UI = [];                                                   // clickable regions, rebuilt each frame
+// ------------------------------------------------------------------ screen effects
+// Menus and the HUD are HTML (ui.js). This canvas only carries the full-screen effects that
+// follow the frame or the 3D camera: flashes, speed lines, floating score labels, the reticle.
 const hudCanvas = document.getElementById('hud');
 const ctx = hudCanvas.getContext('2d');
-let HS = 1, HW = WIN[0], HH = WIN[1];                            // HUD scale and HUD size in HUD units
-const Y = y => HH - y;
 const rgba = (c, a = 1) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`;
-const MXY = () => [g.mx / HS, g.my / HS];                        // mouse in HUD units (y from the top)
+const UIFONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+let hudUsed = true;                                              // was anything drawn last frame?
 
 
-function text(x, y, s, font = H18, c = [1, 1, 1]) {
-  ctx.font = font;
-  ctx.fillStyle = rgba(c);
-  ctx.fillText(s, x, Y(y));
-}
-
-
-function tw_(s, font) {
-  ctx.font = font;
-  return ctx.measureText(s).width;
-}
-
-
-function text_m(xc, y, s, font = H18, c = [1, 1, 1], sh = true) {   // centred on xc, optional drop shadow
-  const x = xc - tw_(s, font) / 2;
-  if (sh) text(x + 1, y - 1, s, font, [0, 0, 0]);
-  text(x, y, s, font, c);
-}
-
-
-function text_c(y, s, font = H18, c = [1, 1, 1]) {
-  text_m(HW / 2, y, s, font, c);
-}
-
-
-// GLUT_STROKE_ROMAN has a cap height of about 100 units; a light sans-serif matches its single-line look
-const strokeFont = sc => `300 ${Math.round(140 * sc)}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
-
-function stroke_w(s, sc) {
-  return tw_(s, strokeFont(sc));
-}
-
-
-function stroke(x, y, s, sc, c, lw = 3.0, a = 1.0) {              // big scalable title text
-  ctx.font = strokeFont(sc);
-  ctx.fillStyle = ctx.strokeStyle = rgba(c, a);
-  ctx.lineWidth = Math.max(0, lw - 3) + 0.8;
-  ctx.fillText(s, x, Y(y));
-  ctx.strokeText(s, x, Y(y));
-}
-
-
-function rect(x, y, w, h, c, a = 1.0) {
+function wash(c, a) {
   ctx.fillStyle = rgba(c, a);
-  ctx.fillRect(x, Y(y + h), w, h);
-}
-
-
-function rrect(x, y, w, h, r, c, a = 1.0) {                       // rounded rectangle
-  r = Math.max(0.0, Math.min(r, w / 2, h / 2));
-  const t = Y(y + h);
-  ctx.fillStyle = rgba(c, a);
-  ctx.beginPath();
-  ctx.moveTo(x + r, t);
-  ctx.arcTo(x + w, t, x + w, t + h, r);
-  ctx.arcTo(x + w, t + h, x, t + h, r);
-  ctx.arcTo(x, t + h, x, t, r);
-  ctx.arcTo(x, t, x + w, t, r);
-  ctx.closePath();
-  ctx.fill();
-}
-
-
-function tri(x1, y1, x2, y2, x3, y3, c, a = 1.0) {
-  ctx.fillStyle = rgba(c, a);
-  ctx.beginPath();
-  ctx.moveTo(x1, Y(y1)); ctx.lineTo(x2, Y(y2)); ctx.lineTo(x3, Y(y3));
-  ctx.closePath();
-  ctx.fill();
-}
-
-
-function vignette(a) {
-  const w = HW, h = HH;
-  const m = 0.16 * w, n = 0.22 * h;
-  const edge = (x0, y0, x1, y1, rx, ry, rw, rh) => {
-    const gr = ctx.createLinearGradient(x0, y0, x1, y1);
-    gr.addColorStop(0, `rgba(0,0,0,${a})`);
-    gr.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = gr;
-    ctx.fillRect(rx, ry, rw, rh);
-  };
-  edge(0, 0, m, 0, 0, 0, m, h);                                  // left
-  edge(w, 0, w - m, 0, w - m, 0, m, h);                          // right
-  edge(0, h, 0, h - n, 0, h - n, w, n);                          // bottom
-  edge(0, 0, 0, n, 0, 0, w, n);                                  // top
+  ctx.fillRect(0, 0, WIN[0], WIN[1]);
 }
 
 
 function speed_lines() {
-  const w = HW, h = HH;
+  const w = WIN[0], h = WIN[1];
   const k = Math.min(1.0, (g.speed - 22) / 20);
   ctx.lineWidth = 1.5;
+  ctx.strokeStyle = `rgba(255,255,255,${0.16 * k})`;
+  ctx.beginPath();
   for (let q = 0; q < Math.trunc(10 + 20 * k); q++) {
     const an = random.uniform(0, 6.2832);
     const r0 = random.uniform(0.38, 0.55), r1 = random.uniform(0.6, 0.9);
     const ca = Math.cos(an), sa = Math.sin(an);
-    const x0 = w / 2 + ca * w * r0, y0 = Y(h / 2 + sa * h * r0);
-    const x1 = w / 2 + ca * w * r1, y1 = Y(h / 2 + sa * h * r1);
-    const gr = ctx.createLinearGradient(x0, y0, x1, y1);
-    gr.addColorStop(0, 'rgba(255,255,255,0)');
-    gr.addColorStop(1, `rgba(255,255,255,${0.22 * k})`);
-    ctx.strokeStyle = gr;
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.moveTo(w / 2 + ca * w * r0, h / 2 + sa * h * r0);
+    ctx.lineTo(w / 2 + ca * w * r1, h / 2 + sa * h * r1);
   }
-  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 
-function button(x, y, w, h, act, label, col, sel = false, sub = null) {
-  const [mx, my] = MXY();
-  const hov = x <= mx && mx <= x + w && y <= HH - my && HH - my <= y + h;
-  UI.push([x, y, w, h, act]);
-  const bc = (sel || hov) ? col : [0.35, 0.36, 0.42];
-  rrect(x - 2, y - 2, w + 4, h + 4, 13, bc, sel ? 1.0 : (hov ? 0.85 : 0.5));
-  rrect(x, y, w, h, 11, [0.08, 0.09, 0.13], 0.97);
-  if (sel) rrect(x, y, w, h, 11, col, 0.28);
-  const lc = (sel || hov) ? [1, 1, 1] : [0.75, 0.77, 0.83];
-  if (sub) {
-    text_m(x + w / 2, y + h / 2 + 3, label, H18, lc);
-    text_m(x + w / 2, y + 8, sub, H10, DIM, false);
-  } else {
-    text_m(x + w / 2, y + h / 2 - 6, label, H18, lc);
+const pv = new THREE.Vector3();
+function draw_pops() {                                           // "+50", "DISQUALIFIED": world position -> screen
+  ctx.textAlign = 'center';
+  ctx.font = `800 ${Math.round(Math.max(13, Math.min(20, WIN[0] / 40)))}px ${UIFONT}`;
+  ctx.lineWidth = 3;
+  for (const p of g.pops) {
+    pv.set(p.x, p.y, p.z).project(cam);
+    if (pv.z > 1) continue;
+    const x = (pv.x + 1) / 2 * WIN[0], y = (1 - pv.y) / 2 * WIN[1], a = Math.min(1, p.t * 2.5);
+    ctx.strokeStyle = `rgba(0,0,0,${0.7 * a})`;
+    ctx.strokeText(p.s, x, y);
+    ctx.fillStyle = rgba(p.c, a);
+    ctx.fillText(p.s, x, y);
   }
 }
 
 
-function hud_play(w, h) {
-  const d = g.dd, L = g.loc;
-  const acc = L.acc;
-  // health + flamethrower panel
-  rrect(14, h - 72, 312, 58, 14, DARK, 0.66);
-  const hp = Math.max(0, g.health) / g.hpmax;
-  rrect(24, h - 40, 292, 18, 9, [0.15, 0.16, 0.2], 0.9);
-  if (hp > 0.01) rrect(24, h - 40, Math.max(18, 292 * hp), 18, 9, lerp([0.95, 0.25, 0.2], [0.3, 0.9, 0.5], hp), 1.0);
-  text(32, h - 36, `HP  ${Math.max(0, g.health)} / ${g.hpmax}`, H12);
-  rrect(24, h - 62, 200, 9, 4, [0.15, 0.16, 0.2], 0.9);
-  if (g.fuel > 1) rrect(24, h - 62, Math.max(9, 200 * g.fuel / 100), 9, 4, g.heat ? [1, 0.25, 0.1] : [1, 0.65, 0.1], 1.0);
-  text(232, h - 62, g.heat ? 'OVERHEATED' : 'FLAME [G]', H10, g.heat ? [1, 0.35, 0.25] : [1, 0.8, 0.4]);
-  // score
-  rrect(w / 2 - 105, h - 70, 210, 56, 16, DARK, 0.66);
-  text_m(w / 2, h - 33, 'SCORE', H10, DIM, false);
-  text_m(w / 2, h - 60, `${Math.trunc(g.score)}`, T24, GOLD);
-  // coins / best / badge
-  rrect(w - 226, h - 72, 212, 58, 14, DARK, 0.66);
-  ctx.fillStyle = rgba(GOLD);
-  ctx.beginPath(); ctx.arc(w - 202, Y(h - 34), 9, 0, Math.PI * 2); ctx.fill();
-  text(w - 184, h - 40, `${g.coins}`, H18);
-  text(w - 124, h - 38, `Best ${g.hi}`, H12, DIM);
-  text(w - 214, h - 62, `${d.name.toUpperCase()}  |  ${L.name.toUpperCase()}`, H10, d.col);
-  // combo
-  let y = h - 98;
-  if (g.mult > 1) {
-    text_m(w / 2, y, `COMBO x${g.mult}`, T24, [1, 0.6, 0.1]);
-    rrect(w / 2 - 60, y - 14, 120, 6, 3, [0.15, 0.16, 0.2], 0.9);
-    const prog = g.mult >= 5 ? 1.0 : (g.chain % 5) / 5;
-    if (prog > 0.02) rrect(w / 2 - 60, y - 14, Math.max(6, 120 * prog), 6, 3, [1, 0.6, 0.1], 1.0);
-    y -= 38;
-  }
-  // curve warning
-  const kk = g.curv(g.D + 35);
-  if (Math.abs(kk) > 0.0007) {
-    const sd = kk > 0 ? 1 : -1;
-    for (let i = 0; i < 3; i++) {
-      const al = 0.35 + 0.65 * Math.max(0.0, Math.sin(g.t * 9 - i * 0.9));
-      const bx = w / 2 + sd * (30 + i * 20);
-      tri(bx - sd * 8, y - 3, bx - sd * 8, y + 15, bx + sd * 6, y + 6, acc, al);
+function reticle() {                                             // dark outline + white core reads on any background
+  const cx_ = g.mx, cy_ = g.my;
+  for (const [lw, col, al] of [[4.5, [0, 0, 0], 0.55], [2, [1, 1, 1], 1.0]]) {
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = rgba(col, al);
+    ctx.beginPath(); ctx.arc(cx_, cy_, 11, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    for (const [dx_, dy_] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      ctx.moveTo(cx_ + dx_ * 15, cy_ - dy_ * 15); ctx.lineTo(cx_ + dx_ * 21, cy_ - dy_ * 21);
     }
-    text_m(w / 2, y - 14, 'CURVE ' + (sd > 0 ? 'RIGHT' : 'LEFT'), H10, [1, 1, 1]);
+    ctx.stroke();
   }
-  // speed gauge
-  rrect(w / 2 - 150, 16, 300, 38, 14, DARK, 0.66);
-  const fr = Math.max(0.0, Math.min(1.0, g.speed / d.vmax));
-  rrect(w / 2 - 138, 24, 276, 9, 4, [0.15, 0.16, 0.2], 0.9);
-  rrect(w / 2 - 138, 24, Math.max(9, 276 * fr), 9, 4, lerp([0.3, 0.8, 1.0], [1.0, 0.4, 0.2], fr), 1.0);
-  rect(w / 2 - 138 + 276 * g.vmin / d.vmax, 22, 2, 13, [1, 1, 1], 0.8);
-  text_m(w / 2, 39, `${Math.trunc(g.speed * 4)} km/h`, H12, [1, 1, 1]);
-  text(w / 2 + 160, 30, 'Q / E', H10, DIM);
-  // power-ups
-  y = 24;
-  if (g.shield) {
-    rrect(14, y, 112, 30, 15, [0.1, 0.32, 0.55], 0.85);
-    text_m(70, y + 10, 'SHIELD', H12, [0.7, 0.9, 1]); y += 38;
-  }
-  if (g.rapid > 0) {
-    rrect(14, y, 138, 30, 15, [0.55, 0.28, 0.05], 0.85);
-    text_m(83, y + 10, `RAPID FIRE ${g.rapid.toFixed(0)}s`, H12, [1, 0.85, 0.5]);
-  }
-  // reticle (dark outline + white core so it reads on any background)
-  if (g.state == 'play') {
-    const [mx, my] = MXY();
-    const cx_ = mx, cy_ = Y(HH - my);
-    for (const [lw, col, al] of [[4.5, [0, 0, 0], 0.55], [2, [1, 1, 1], 1.0]]) {
-      ctx.lineWidth = lw;
-      ctx.strokeStyle = rgba(col, al);
-      ctx.beginPath(); ctx.arc(cx_, cy_, 11, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath();
-      for (const [dx_, dy_] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        ctx.moveTo(cx_ + dx_ * 15, cy_ - dy_ * 15); ctx.lineTo(cx_ + dx_ * 21, cy_ - dy_ * 21);
-      }
-      ctx.stroke();
-    }
-    ctx.lineWidth = 1;
-    rect(cx_ - 2, HH - my - 2, 4, 4, [0, 0, 0], 0.6);
-    rect(cx_ - 1.5, HH - my - 1.5, 3, 3, acc, 1.0);
-  }
-}
-
-
-function menu_screen(w, h) {
-  const L = g.loc;
-  const cx = w / 2, cy = h / 2;
-  rect(0, 0, w, h, [0, 0, 0], 0.30);
-  const pw = 820, ph = 520;
-  const x0 = cx - pw / 2, y0 = cy - ph / 2;
-  const top = y0 + ph;
-  rrect(x0 - 3, y0 - 3, pw + 6, ph + 6, 23, L.acc, 0.55);
-  rrect(x0, y0, pw, ph, 20, DARK, 0.84);
-  const title = "DICTATOR'S DASH";
-  const sc = 0.42;
-  const wd = stroke_w(title, sc);
-  stroke(cx - wd / 2 + 3, top - 91, title, sc, [0, 0, 0], 5, 0.6);
-  stroke(cx - wd / 2, top - 88, title, sc, GOLD, 3);
-  text_m(cx, top - 114, '3D EDITION   |   ENDLESS RUNNER', H12, DIM, false);
-  rect(x0 + 40, top - 128, pw - 80, 1, [1, 1, 1], 0.12);
-  // difficulty
-  text_m(cx, top - 152, 'SELECT DIFFICULTY', H12, DIM, false);
-  const bw = 230, gap = 20;
-  const bx0 = cx - (3 * bw + 2 * gap) / 2;
-  DIFFS.forEach((dd, i) => {
-    button(bx0 + i * (bw + gap), top - 212, bw, 46, ['diff', i], dd.name.toUpperCase(), dd.col,
-           i == g.di, `Best ${g.his[i]}`);
-  });
-  text_m(cx, top - 232, g.dd.desc, H12, g.dd.col, false);
-  // location
-  text_m(cx, top - 262, 'SELECT LOCATION', H12, DIM, false);
-  const cw = 176, cg = 14;
-  const cx0 = cx - (4 * cw + 3 * cg) / 2;
-  const [mx, my] = MXY();
-  LOCS.forEach((Lc, i) => {
-    const bx = cx0 + i * (cw + cg), by = top - 382;
-    const sel = i == g.li;
-    const hov = bx <= mx && mx <= bx + cw && by <= HH - my && HH - my <= by + 104;
-    UI.push([bx, by, cw, 104, ['loc', i]]);
-    rrect(bx - 2, by - 2, cw + 4, 108, 13, sel ? Lc.acc : [0.35, 0.36, 0.42], sel ? 1.0 : (hov ? 0.85 : 0.5));
-    rrect(bx, by, cw, 104, 11, [0.08, 0.09, 0.13], 0.97);
-    const gr = ctx.createLinearGradient(0, Y(by + 98), 0, Y(by + 56));
-    gr.addColorStop(0, rgba(Lc.pv));
-    gr.addColorStop(1, rgba(Lc.ground));
-    ctx.fillStyle = gr;
-    ctx.fillRect(bx + 6, Y(by + 98), cw - 12, 42);
-    text_m(bx + cw / 2, by + 34, Lc.name, H18, (sel || hov) ? [1, 1, 1] : [0.78, 0.8, 0.86]);
-    text_m(bx + cw / 2, by + 14, Lc.tag, H10, sel ? Lc.acc : DIM, false);
-  });
-  text_m(cx, top - 402, L.desc, H12, L.acc, false);
-  button(cx - 150, top - 470, 300, 46, ['start'], 'START RUN', [0.4, 1.0, 0.55], true, null);
-  text_m(cx, top - 500, 'Up/Down: difficulty   Left/Right: location   Enter: start   V view   N time   M weather',
-         H10, DIM, false);
-}
-
-
-function panel_screen(w, h, title, tcol, pw, ph, lines, btns) {
-  rect(0, 0, w, h, [0, 0, 0], 0.5);
-  const cx = w / 2, cy = h / 2;
-  const x0 = cx - pw / 2, y0 = cy - ph / 2;
-  rrect(x0 - 3, y0 - 3, pw + 6, ph + 6, 23, tcol, 0.5);
-  rrect(x0, y0, pw, ph, 20, DARK, 0.9);
-  const wd = stroke_w(title, 0.36);
-  stroke(cx - wd / 2 + 2, y0 + ph - 78, title, 0.36, [0, 0, 0], 5, 0.6);
-  stroke(cx - wd / 2, y0 + ph - 75, title, 0.36, tcol, 3);
-  let y = y0 + ph - 118;
-  for (const [s, font, c] of lines) {
-    text_m(cx, y, s, font, c);
-    y -= 28;
-  }
-  const n = btns.length;
-  const bw = 200;
-  const bx = cx - (n * bw + (n - 1) * 20) / 2;
-  btns.forEach(([lab, act, col], i) => button(bx + i * (bw + 20), y0 + 26, bw, 44, act, lab, col, i == 0));
+  ctx.fillStyle = rgba(g.loc.acc);
+  ctx.fillRect(cx_ - 1.5, cy_ - 1.5, 3, 3);
 }
 
 
 function draw_hud() {
-  const w = HW, h = HH;
-  UI.length = 0;
+  const play = g.state == 'play';
+  const busy = g.bolt > 0 || g.weather == 3 || g.flash > 0 || play;
+  if (!busy && !hudUsed) return;                                 // nothing to draw and nothing to erase
+  hudUsed = busy;
   const dpr = hudCanvas.width / WIN[0];
-  ctx.setTransform(dpr * HS, 0, 0, dpr * HS, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, WIN[0], WIN[1]);
+  const soft = SET.shake ? 1.0 : 0.4;                            // "reduce flashes" setting
+  if (g.bolt > 0) wash([1, 1, 1], Math.min(0.6, g.bolt * 4) * soft);
+  if (g.weather == 3) wash([0.8, 0.6, 0.3], 0.18 * g.wk);
+  if (g.flash > 0) wash([1, 0, 0], g.flash * soft);
+  if (!play) return;
+  if (g.speed > 22) speed_lines();
+  if (g.pops.length) draw_pops();
+  if (inputMode == 'mouse') reticle();
+}
 
-  if (g.bolt > 0) rect(0, 0, w, h, [1, 1, 1], Math.min(0.7, g.bolt * 4));
-  if (g.weather == 3) rect(0, 0, w, h, [0.8, 0.6, 0.3], 0.18 * g.wk);
-  if (g.flash > 0) rect(0, 0, w, h, [1, 0, 0], g.flash);
-  vignette(0.42);
-  if (g.state == 'play' && g.speed > 22) speed_lines();
-  if (g.state != 'menu') hud_play(w, h);
 
-  if (g.state == 'menu') {
-    menu_screen(w, h);
-  } else if (g.state == 'paused') {
-    panel_screen(w, h, 'PAUSED', [0.6, 0.8, 1.0], 460, 220, [['Take a breath. The desert can wait.', H12, DIM]],
-                 [['RESUME', ['resume'], [0.4, 1.0, 0.55]], ['MENU', ['menu'], [1.0, 0.75, 0.3]]]);
-  } else if (g.state == 'over') {
-    const nb = Math.trunc(g.score) >= g.hi && g.hi > 0;
-    const lines = [[`Score ${Math.trunc(g.score)}      Coins ${g.coins}      Guards downed ${g.kills}`, H18, [1, 1, 1]],
-                   [(nb ? 'NEW BEST!  ' : '') + `Best (${g.dd.name}): ${g.hi}`, H18, GOLD],
-                   [`${g.dd.name}  |  ${g.loc.name}`, H12, DIM]];
-    panel_screen(w, h, 'GAME OVER', [1.0, 0.3, 0.25], 600, 300, lines,
-                 [['RESTART [R]', ['restart'], [0.4, 1.0, 0.55]], ['MENU [B]', ['menu'], [1.0, 0.75, 0.3]]]);
+// ------------------------------------------------------------------ aiming without a mouse
+function auto_aim() {
+  // Touch and gamepad: point at the nearest threat ahead, leading it by the bullet's flight time.
+  const [hx, hy, hz] = g.hand, sp = g.speed;
+  let best = null, bd = 1e9;
+  const see = (x, y, z, rel, reach) => {
+    if (z > -3 || z < -48) return;
+    const wx = g.rx(x, z), side = Math.abs(wx - hx);
+    if (side > reach) return;
+    const d = side * 1.5 - z;
+    if (d < bd) { bd = d; best = [wx, y, z, rel]; }
+  };
+  for (const c of g.clones) see(c.x, 1.1, c.z, 1.25, 7);
+  for (const d of g.drones) see(d.x, d.y, d.z, 0.5, 7);
+  for (const r of g.rivals) see(r.x, r.y + 1.1, r.z, 0.7, 7);
+  for (const o of g.obs) if (o.k == 'crate') see(o.x, 0.9, o.z, 1.0, 1.5);   // only crates in your way
+  if (!best) return null;
+  const t = Math.hypot(best[0] - hx, best[2] - hz) / 50;
+  return _norm([best[0] - hx, best[1] - hy, best[2] + best[3] * sp * t - hz]);
+}
+
+
+function aim_now() {
+  if (inputMode == 'mouse') return compute_aim();
+  const a = SET.autoaim ? auto_aim() : null;
+  if (a) return a;
+  return inputMode == 'touch' && g.tap_t > 0 ? compute_aim() : [0.0, 0.0, -1.0];
+}
+
+
+// ------------------------------------------------------------------ quality and frame pacing
+function apply_quality() {
+  const q = SET.quality;
+  Object.assign(Q, TIERS[q == 'auto' ? Q.auto : q]);
+  if (q != 'auto') Q.dyn = 1.0;
+  reshape(innerWidth, innerHeight);
+}
+
+
+function reshape(w, h) {
+  WIN[0] = Math.max(1, w); WIN[1] = Math.max(1, h);
+  const dpr = devicePixelRatio || 1;
+  ren.setPixelRatio(Math.min(dpr, Q.pr) * Q.dyn);
+  ren.setSize(WIN[0], WIN[1], false);
+  const hd = Math.min(dpr, Q.pr > 1 ? 2 : 1);
+  hudCanvas.width = Math.round(WIN[0] * hd);
+  hudCanvas.height = Math.round(WIN[1] * hd);
+  hudUsed = true;
+}
+
+
+// 'Auto' quality: once a second, look at the average frame time. Too slow -> render fewer pixels,
+// then drop a detail tier. Comfortably fast -> creep back up, waiting longer after every drop so a
+// borderline device settles instead of bouncing between two resolutions.
+let FPS = 60, pf_t = 0.0, pf_n = 0, pf_skip = 3, pf_wait = 4, pf_cool = 0;
+
+function perf_tick(dt) {
+  pf_t += dt; pf_n++;
+  if (pf_t < 1.0) return;
+  const ms = pf_t / pf_n * 1000;
+  FPS = Math.round(1000 / ms);
+  pf_t = 0.0; pf_n = 0;
+  if (pf_skip > 0) { pf_skip--; return; }                        // shader compiles make the first seconds slow
+  if (SET.quality != 'auto') return;
+  pf_cool--;
+  if (ms > 21) {
+    if (Q.dyn > 0.6) Q.dyn = Math.max(0.6, Q.dyn - 0.1);
+    else if (Q.auto != 'low') {
+      Q.auto = Q.auto == 'high' ? 'medium' : 'low';
+      Object.assign(Q, TIERS[Q.auto]);
+      Q.dyn = 0.8;
+    } else return;
+    pf_wait = Math.min(60, pf_wait * 2);
+    pf_cool = pf_wait;
+    reshape(innerWidth, innerHeight);
+  } else if (ms < 17.5 && Q.dyn < 1.0 && pf_cool <= 0) {
+    Q.dyn = Math.min(1.0, Q.dyn + 0.1);
+    pf_cool = pf_wait;
+    reshape(innerWidth, innerHeight);
   }
-
-  if (isTouch) return;                                           // keyboard hints: the touch buttons replace these keys
-  const wl_ = WM[g.wmode] + (g.wmode == 0 ? ` (${WN[g.weather]})` : '');
-  const s_ = `[N] Time: ${TODN[g.tod]}    [M] Weather: ${wl_}    [V] View: ${VN[g.view]}    [B] Menu`;
-  text(w - tw_(s_, H10) - 14, 6, s_, H10, [0.85, 0.88, 0.95]);
 }
 
 
@@ -1692,41 +2227,40 @@ function display() {
 }
 
 
-function reshape(w, h) {
-  WIN[0] = w; WIN[1] = Math.max(1, h);
-  const dpr = Math.min(devicePixelRatio || 1, 2);
-  ren.setPixelRatio(dpr);
-  ren.setSize(WIN[0], WIN[1], false);
-  hudCanvas.width = Math.round(WIN[0] * dpr);
-  hudCanvas.height = Math.round(WIN[1] * dpr);
-  HS = Math.min(1, WIN[0] / 880, WIN[1] / 560);                 // shrink the HUD only if the menu would not fit
-  HW = WIN[0] / HS; HH = WIN[1] / HS;
-}
-
-
 let last = 0.0;
 let cursor = null;
 
 
 function tick(ms) {
+  requestAnimationFrame(tick);
   const now = ms / 1000.0;
-  const dt = Math.min(now - last, 0.033);
+  const dt = Math.min(now - last, 0.1);
   last = now;
-  g.update(dt);
-  const want = g.state == 'play' ? 'none' : 'default';          // custom reticle while playing
+  if (dt <= 0) return;
+  perf_tick(dt);
+  poll_pad();
+  // Fixed-size physics steps: a slow frame runs more steps instead of slowing the game down,
+  // and no step is long enough for an obstacle to pass through Aladdin.
+  const n = Math.max(1, Math.ceil(dt / 0.02));
+  for (let i = 0; i < n; i++) g.update(dt / n);
+  Snd.flame(g.state == 'play' && g.fire_on && !g.heat);
+  FDT = g.state == 'paused' || g.state == 'over' ? 0.0 : dt;
+  const want = g.state == 'play' && inputMode == 'mouse' ? 'none' : 'default';   // custom reticle while playing
   if (want != cursor) {
     cursor = want;
     document.body.style.cursor = want;
-    platform_state_changed();
   }
   display();
-  requestAnimationFrame(tick);
+  UIX.frame(dt);
 }
 
 
 function keyboard(key, x, y) {
   const k = key.toLowerCase();
-  if (k == '\x1b') return;                                       // native quits here; a browser tab cannot
+  if (k == '\x1b') {                                             // native quits here; on the web Esc pauses
+    g.pause();
+    return;
+  }
   if (k == 'v') {
     g.view = (g.view + 1) % 3;
     return;
@@ -1743,14 +2277,17 @@ function keyboard(key, x, y) {
   if (k == 'b') g.to_menu();
   else if (k == 'r') g.reset();
   else if (k == 'p') g.pause();
+  else if (k == '\r' && g.state == 'over') g.reset();
   else if (k == 'a') g.move(-1);
   else if (k == 'd') g.move(1);
   else if (k == 'w' || k == ' ') g.jump();
   else if (k == 's') g.duck();
   else if (k == 'f') g.shoot(true);
-  else if (k == 'g') g.fire_on = true;
+  else if (k == 'g') g.fire_on = g.state == 'play';
   else if (k == 'q') g.speed_adj(-3);
   else if (k == 'e') g.speed_adj(3);
+  else if (k == 'x') g.missile();
+  else if (k == 'c') g.doom_call();
 }
 
 
@@ -1785,95 +2322,165 @@ function mouse(button, state, x, y) {
     g.fire_on = state == GLUT_DOWN && g.state == 'play';
     return;
   }
-  if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
-    if (g.state != 'play') {                                     // menu / pause / game-over buttons
-      const ux = x / HS, uy = HH - y / HS;
-      for (const [bx, by, bw, bh, act] of UI) {
-        if (bx <= ux && ux <= bx + bw && by <= uy && uy <= by + bh) {
-          g.ui(act);
-          return;
-        }
-      }
-      return;
-    }
+  if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN && g.state == 'play') {
+    g.aim = compute_aim();                                       // aim at this click, not last frame's cursor
     g.shoot();
   }
 }
 
 
 // ------------------------------------------------------------------ platform layer (web only)
-// Browser events are translated into the GLUT callbacks above. Phones get touch controls that
-// call the same game actions; nothing here changes the game rules.
+// Browser events are translated into the GLUT callbacks above. Phones get swipes and touch
+// buttons, gamepads are polled; both call the same game actions as the keyboard.
 const isTouch = matchMedia('(pointer: coarse)').matches;
 const $ = id => document.getElementById(id);
+const canvas = $('c');
+let inputMode = isTouch ? 'touch' : 'mouse';                     // 'mouse' | 'touch' | 'pad': decides how shots are aimed
 
-function unlock_audio() {                                        // browsers only allow audio after a user gesture
-  try {
-    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-    if (AC.state === 'suspended') AC.resume();
-  } catch (e) { AC = null; }
+function set_mode(m) {
+  if (m == inputMode) return;
+  inputMode = m;
+  document.body.classList.toggle('touch', m == 'touch');
 }
 
-function platform_state_changed() {                              // touch buttons only while playing
-  document.body.classList.toggle('playing', g.state == 'play');
-}
+// The keyboard belongs to a focused control (reached with Tab) while a menu is up
+const on_control = () => g.state != 'play' && document.activeElement &&
+                         /^(BUTTON|INPUT|A|SELECT)$/.test(document.activeElement.tagName);
 
 addEventListener('keydown', e => {
-  unlock_audio();
-  if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
+  Snd.unlock();
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (typeof UIX == 'undefined') return;                          // a key pressed while the page is still loading
+  if (UIX.key(e)) return;                                        // a dialog is open: it owns the keyboard
+  if (on_control() && (e.key == 'Enter' || e.key == ' ')) return;
+  if ([' ', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
+  if (e.repeat && !['a', 'd', 'A', 'D', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;   // only lane changes auto-repeat
   if (e.key.startsWith('Arrow')) special(e.key, g.mx, g.my);
   else if (e.key == 'Enter') keyboard('\r', g.mx, g.my);
   else if (e.key == 'Escape') keyboard('\x1b', g.mx, g.my);
   else if (e.key.length == 1) keyboard(e.key, g.mx, g.my);
 });
-addEventListener('keyup', e => { if (e.key.length == 1) keyboard_up(e.key, g.mx, g.my); });
+addEventListener('keyup', e => {
+  if (e.key == ' ' && !on_control()) e.preventDefault();         // Space must not "click" a stale focused button
+  if (e.key.length == 1) keyboard_up(e.key, g.mx, g.my);
+});
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('resize', () => reshape(innerWidth, innerHeight));
+addEventListener('gesturestart', e => e.preventDefault());       // iOS pinch zoom
+for (const n of ['pointerup', 'touchend', 'click']) addEventListener(n, () => Snd.unlock(), { passive: true });
 
-const onButton = e => e.target.closest && e.target.closest('.m-ctrl-btn');
-let tx = 0, ty = 0;
-
-addEventListener('pointermove', e => {
-  if (e.pointerType == 'mouse' || g.state == 'play') motion(e.clientX, e.clientY);
+// Leaving the tab pauses the run; so does the window losing focus
+document.addEventListener('visibilitychange', () => { if (document.hidden && g.state == 'play') g.pause(); });
+addEventListener('blur', () => {
+  g.fire_on = false;
+  if (g.state == 'play') g.pause();
 });
 
-addEventListener('pointerdown', e => {
-  unlock_audio();
-  if (onButton(e)) return;
+canvas.addEventListener('webglcontextlost', e => e.preventDefault());
+canvas.addEventListener('webglcontextrestored', () => location.reload());
+
+// ---- mouse and touch on the 3D view (menus and HUD buttons are HTML and handle themselves)
+const touches = new Map();                                       // pointerId -> where the gesture started
+
+canvas.addEventListener('pointerdown', e => {
+  Snd.unlock();
   if (e.pointerType == 'mouse') {
+    set_mode('mouse');
     mouse(e.button == 2 ? GLUT_RIGHT_BUTTON : GLUT_LEFT_BUTTON, GLUT_DOWN, e.clientX, e.clientY);
-  } else {
-    tx = e.clientX; ty = e.clientY;
+    return;
   }
+  set_mode('touch');
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, sw: false });
+});
+
+addEventListener('pointermove', e => {
+  if (e.pointerType == 'mouse') {
+    if (e.movementX || e.movementY) set_mode('mouse');
+    motion(e.clientX, e.clientY);
+    return;
+  }
+  // A swipe acts the moment it has travelled far enough, not when the finger lifts.
+  // One swipe is one action, however long the finger keeps moving.
+  const t = touches.get(e.pointerId);
+  if (!t || t.sw || g.state != 'play') return;
+  const dx = e.clientX - t.x, dy = e.clientY - t.y, th = 24;
+  if (Math.abs(dx) > th && Math.abs(dx) > Math.abs(dy)) g.move(dx > 0 ? 1 : -1);
+  else if (dy < -th && Math.abs(dy) > Math.abs(dx)) g.jump();
+  else if (dy > th && Math.abs(dy) > Math.abs(dx)) g.duck();
+  else return;
+  t.sw = true;
 });
 
 addEventListener('pointerup', e => {
-  if (onButton(e)) return;
   if (e.pointerType == 'mouse') {
     if (e.button == 2) mouse(GLUT_RIGHT_BUTTON, GLUT_UP, e.clientX, e.clientY);
     return;
   }
-  // touch: swipe = move / jump / slide, tap = shoot (or press a menu button)
-  const dx = e.clientX - tx, dy = e.clientY - ty;
-  if (g.state == 'play' && Math.abs(dx) > 35 && Math.abs(dx) > Math.abs(dy)) g.move(dx > 0 ? 1 : -1);
-  else if (g.state == 'play' && dy < -35) g.jump();
-  else if (g.state == 'play' && dy > 35) g.duck();
-  else mouse(GLUT_LEFT_BUTTON, GLUT_DOWN, e.clientX, e.clientY);
+  const t = touches.get(e.pointerId);
+  touches.delete(e.pointerId);
+  // Tap length comes from the events' own timestamps: a slow frame between finger-down and
+  // finger-up must not turn a quick tap into a rejected long press.
+  if (!t || t.sw || g.state != 'play' || e.timeStamp - t.t > 450) return;
+  g.mx = e.clientX; g.my = e.clientY;                            // tap: shoot (auto-aim, else where you tapped)
+  g.tap_t = 0.5;
+  g.aim = aim_now();
+  g.shoot();
 });
+addEventListener('pointercancel', e => touches.delete(e.pointerId));
 
 function touchKey(id, key) {
-  $(id).addEventListener('pointerdown', e => { e.preventDefault(); unlock_audio(); keyboard(key, g.mx, g.my); });
+  $(id).addEventListener('pointerdown', e => { e.preventDefault(); Snd.unlock(); set_mode('touch'); keyboard(key, g.mx, g.my); });
 }
-touchKey('bv', 'v'); touchKey('bw', 'm'); touchKey('bt', 'n'); touchKey('bp', 'p');
-touchKey('be', 'e'); touchKey('bq', 'q');
-$('bf').addEventListener('pointerdown', e => { e.preventDefault(); unlock_audio(); g.fire_on = g.state == 'play'; });
+touchKey('bv', 'v'); touchKey('be', 'e'); touchKey('bq', 'q'); touchKey('bm', 'x'); touchKey('bd', 'c');
+$('bf').addEventListener('pointerdown', e => { e.preventDefault(); Snd.unlock(); set_mode('touch'); g.fire_on = g.state == 'play'; });
 for (const n of ['pointerup', 'pointercancel', 'pointerleave']) $('bf').addEventListener(n, () => (g.fire_on = false));
 document.body.classList.toggle('touch', isTouch);
 
-
-function main() {
-  reshape(innerWidth, innerHeight);
-  requestAnimationFrame(tick);
+// ---- gamepad (standard mapping): stick / d-pad lanes, A jump, B slide, X / RB shoot, RT flame, LB missile, Back for the Beard of Doom
+const padWas = {};
+function poll_pad() {
+  if (!navigator.getGamepads) return;
+  let p = null;
+  for (const q of navigator.getGamepads()) if (q && q.connected) { p = q; break; }
+  if (!p) return;
+  const b = i => !!(p.buttons[i] && p.buttons[i].pressed);
+  const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+  const now = { l: b(14) || ax < -0.55, r: b(15) || ax > 0.55, u: b(12) || ay < -0.6, d: b(13) || ay > 0.6,
+                a: b(0), b: b(1), x: b(2) || b(5), y: b(3), start: b(9), fire: b(7), slow: b(6), m: b(4), doom: b(8) };
+  const hit = k => now[k] && !padWas[k];
+  let any = false;
+  for (const k in now) any = any || now[k];
+  if (any) { set_mode('pad'); Snd.unlock(); }
+  if (UIX.blocking()) {
+    if (hit('b') || hit('start')) UIX.close();
+  } else if (g.state == 'menu') {
+    if (hit('l')) g.set_loc(g.li - 1);
+    if (hit('r')) g.set_loc(g.li + 1);
+    if (hit('u')) g.set_diff(g.di - 1);
+    if (hit('d')) g.set_diff(g.di + 1);
+    if (hit('a') || hit('start')) g.reset();
+  } else if (g.state == 'play') {
+    if (hit('l')) g.move(-1);
+    if (hit('r')) g.move(1);
+    if (hit('a') || hit('u')) g.jump();
+    if (hit('b') || hit('d')) g.duck();
+    if (now.x) g.shoot();
+    if (hit('y')) g.view = (g.view + 1) % 3;
+    if (hit('m')) g.missile();
+    if (hit('doom')) g.doom_call();
+    if (hit('start')) g.pause();
+    if (inputMode == 'pad') g.fire_on = now.fire;
+  } else {
+    if (hit('a') || hit('start')) { if (g.state == 'paused') g.pause(); else g.reset(); }
+    if (hit('b')) g.to_menu();
+  }
+  Object.assign(padWas, now);
 }
 
-main();
+
+function main() {
+  Q.auto = isTouch || (navigator.hardwareConcurrency || 8) <= 4 ? 'medium' : 'high';
+  apply_quality();
+  requestAnimationFrame(tick);
+}
+// main() is called at the end of ui.js, once every script has loaded.

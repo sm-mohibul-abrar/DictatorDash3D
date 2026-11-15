@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a1030"/>
+      <stop offset="0.55" stop-color="#8f2a26"/>
+      <stop offset="1" stop-color="#f79954"/>
+    </linearGradient>
+    <radialGradient id="gold" cx="0.36" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#fff6c2"/>
+      <stop offset="0.5" stop-color="#f2bf26"/>
+      <stop offset="1" stop-color="#b07a08"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- the road, running to the horizon -->
+  <path d="M236 250h40l150 262H86z" fill="#5c1418"/>
+  <path d="M236 250h8L112 512H86zM268 250h8l150 262h-26z" fill="#f2bf26"/>
+  <path d="M253 290h6l4 46h-14zM247 372h18l6 62h-30z" fill="#f4e9d8"/>
+  <!-- ribbon and medal -->
+  <path d="M176 60h66l40 130h-60zM336 60h-66l-40 130h60z" fill="#e0483c"/>
+  <path d="M216 60h26l40 130h-26zM296 60h-26l-40 130h26z" fill="#fff" opacity="0.85"/>
+  <circle cx="256" cy="262" r="112" fill="#7a5200"/>
+  <circle cx="256" cy="256" r="110" fill="url(#gold)"/>
+  <circle cx="256" cy="256" r="88" fill="none" stroke="#7a5200" stroke-opacity="0.45" stroke-width="8"/>
+  <path d="M236 214l34-22h14v130h-30v-94l-18 10z" fill="#7a5200"/>
+</svg>
