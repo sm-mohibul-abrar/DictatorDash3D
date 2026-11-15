@@ -7,7 +7,7 @@
  *
  * Bump CACHE whenever the files below change in a release: that clears the old copy.
  */
-const CACHE = 'dictators-dash-v4.6.0';
+const CACHE = 'dictators-dash-v4.6.1';
 const FILES = [
   './',
   'index.html',

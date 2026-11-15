@@ -74,7 +74,7 @@ const say_line = k => LINES[k][Math.floor(Math.random() * LINES[k].length)];
 
 // Nuclear Nadal's Lab: permanent upgrades, three levels each, paid for with banked coins.
 const GADGETS = [
-  { id: 'hand', name: 'Pointy Hand Missile', desc: 'Fired from your hand, it hunts the nearest enemy. Each level reloads 3 s faster with a bigger blast.' },
+  { id: 'hand', name: 'Pointy Hand Missile', desc: 'Unlocks the missile. It locks onto one enemy and destroys only that one. Reloads in 8 s, then 6 s, then 4 s.' },
   { id: 'beard', name: 'Pointy Beard of Doom', desc: 'Level 1 unlocks the big one: it clears the whole track. Higher levels charge faster.' },
   { id: 'magnet', name: 'Coin Magnet', desc: 'Pulls coins to you: from further ahead and from more lanes with each level.' },
   { id: 'rocket', name: 'Rocket Boots Mk II', desc: 'Rocket boots burn 1.5 s longer per level.' },

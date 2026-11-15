@@ -127,7 +127,7 @@ const UIX = (() => {
   Bus.on('medal', () => Snd.chant(cheer_name(), 2));
   Bus.on('chant', () => Snd.chant(cheer_name(), 1));
   Bus.on('shot', () => {
-    if (g.loc.kind != 'stadium' || g.t - screamAt < 3) return;   // only where there is a crowd, and not on every shot
+    if (g.t - screamAt < 3) return;                // his supporters are everywhere; not on every shot
     screamAt = g.t;
     Snd.scream();
   });
@@ -585,20 +585,20 @@ const UIX = (() => {
         (g.boost > 0 ? `<span class="rapid">ROCKET BOOTS ${Math.ceil(g.boost)}s</span>` : '');
     }
 
-    // Nadal's lab gear: the hand missile's reload, the Beard of Doom's charge, the magnet
-    const hq = Math.round((1 - g.hm_cd / g.hm_max) * 16), dq = Math.floor(g.doom * 20);
-    const gk = hq + '|' + Math.ceil(g.hm_cd) + '|' + dq + '|' + inputMode;
+    // Nadal's lab gear: the round buttons fill up as the hand missile reloads and the Beard of Doom charges
+    const hq = g.up.hand ? Math.round((1 - g.hm_cd / g.hm_max) * 24) : 0, dq = Math.floor(g.doom * 24);
+    const gk = [hq, dq, inputMode, g.up.hand || 0, g.up.beard || 0, g.up.magnet || 0].join('|');
     if (seen.gk !== gk) {
       seen.gk = gk;
-      const keys = inputMode == 'pad' ? [' · LB', ' · BACK'] : [' · X', ' · C'];
-      el('gear').innerHTML =
-        `<span class="k${g.hm_cd > 0 ? '' : ' ready'}">${g.hm_cd > 0 ? 'MISSILE ' + Math.ceil(g.hm_cd) + 's' : 'HAND MISSILE' + keys[0]}</span>` +
-        (g.up.beard ? `<span class="k${g.doom >= 1 ? ' ready doom' : ''}">${g.doom >= 1 ? 'BEARD OF DOOM' + keys[1] : 'DOOM ' + dq * 5 + '%'}</span>` : '') +
-        (g.up.magnet ? `<span>MAGNET ${g.up.magnet}</span>` : '');
-      el('bm').style.setProperty('--k', hq / 16);
-      el('bd').style.setProperty('--k', dq / 20);
-      cls('bm', 'ready', g.hm_cd <= 0);
+      el('gear').innerHTML = g.up.magnet ? `<span>MAGNET ${g.up.magnet}</span>` : '';
+      const keys = inputMode == 'pad' ? ['LB', 'BACK'] : inputMode == 'mouse' ? ['X', 'C'] : ['', ''];
+      el('bm').dataset.key = keys[0];
+      el('bd').dataset.key = keys[1];
+      el('bm').style.setProperty('--k', hq / 24);
+      el('bd').style.setProperty('--k', dq / 24);
+      cls('bm', 'ready', !!g.up.hand && g.hm_cd <= 0);
       cls('bd', 'ready', g.doom >= 1);
+      show('bm', !!g.up.hand);
       show('bd', !!g.up.beard);
     }
 

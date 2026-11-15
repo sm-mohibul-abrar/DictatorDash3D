@@ -163,7 +163,7 @@
     let b = tquads[tex.uuid];
     const make = cap => {
       const mesh = new THREE.InstancedMesh(geo('plane', () => new THREE.PlaneGeometry(1, 1)),
-                                           new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide }), cap);
+                                           new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, alphaTest: 0.5 }), cap);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false; mesh.matrixAutoUpdate = false; mesh.count = 0;
       scene.add(mesh);

@@ -52,10 +52,9 @@ const Actors = (() => {
     fear: {
       Spine: [-4, 0, 0], LeftArm: [-160, 0, 14], RightArm: [-160, 0, -14], LeftForeArm: [-12, 0, 0], RightForeArm: [-12, 0, 0]
     },
-    // both fists in the air without breaking stride: the Supreme Leader has won again
-    cheer: {
-      Spine: [-6, 0, 0], Head: [-10, 0, 0], LeftArm: [-150, 0, 24], RightArm: [-150, 0, -24], LeftForeArm: [-25, 0, 0], RightForeArm: [-25, 0, 0]
-    },
+    // victory: chest out, chin up. The arms are aimed into a V by show() (o.reach), not posed by angle.
+    cheer: { Spine: [-8, 0, 0], Spine2: [-5, 0, 0], Head: [-16, 0, 0] },
+    pump: { Head: [-6, 0, 0] },
     // out of breath: hunched over, head down, arms heavy
     tired: {
       Spine: [14, 0, 0], Spine1: [10, 0, 0], Neck: [8, 0, 0], Head: [12, 0, 0], LeftArm: [12, 0, 0], RightArm: [12, 0, 0]
@@ -362,11 +361,11 @@ const Actors = (() => {
       all.push(this);
     }
 
-    // Straighten the right arm along a world direction: the pistol arm, while he is firing.
+    // Straighten one arm along a world direction: the pistol arm, or an official holding the tape.
     // Each segment is turned, in world space, from where it points now to where it should point.
-    point(aim, k) {
+    point(aim, k, side = 'Right') {
       v1.set(aim[0], aim[1], aim[2]).normalize();
-      for (const [a, b] of [['RightArm', 'RightForeArm'], ['RightForeArm', 'RightHand']]) {
+      for (const [a, b] of [[side + 'Arm', side + 'ForeArm'], [side + 'ForeArm', side + 'Hand']]) {
         const A = this.bones[a], B = this.bones[b];
         if (!A || !B) return;
         A.updateWorldMatrix(true, true);
@@ -378,6 +377,13 @@ const Actors = (() => {
         A.userData.out.copy(A.quaternion);
         A.userData.posed = true;
       }
+    }
+
+    hand(side) {                                    // where that hand is in the world, after show()
+      const B = this.bones[side + 'Hand'];
+      if (!B) return null;
+      B.updateWorldMatrix(true, false);
+      return B.getWorldPosition(new THREE.Vector3());
     }
 
     // o: x, y, z, dt, rate (stride speed), dir (sideways drift per unit forward: the heading) or yaw (radians),
@@ -409,7 +415,7 @@ const Actors = (() => {
         u.posed = false;
       }
 
-      const w = { slide: sl, air, fear, cheer: (o.cheer || 0) * (1 - sl) * (1 - fear), tired: (o.tired || 0) * (1 - still) };
+      const w = { slide: sl, air, fear, cheer: (o.cheer || 0) * (1 - sl) * (1 - fear), pump: (o.pump || 0) * (1 - sl) * (1 - fear), tired: (o.tired || 0) * (1 - still) };
       for (const name of ORDER) {
         let px = 0, py = 0, pz = 0;
         for (const k in w) {
@@ -427,7 +433,8 @@ const Actors = (() => {
         b.userData.posed = true;
       }
 
-      if (o.aimK > 0 && o.aim) this.point(o.aim, o.aimK);
+      if (o.reach) for (const [aim, k, side] of o.reach) if (k > 0) this.point(aim, k, side);   // arms aimed by direction
+      if (o.aimK > 0 && o.aim) this.point(o.aim, o.aimK, o.arm);
 
       const t = o.tint || {};
       for (const p of this.parts) {

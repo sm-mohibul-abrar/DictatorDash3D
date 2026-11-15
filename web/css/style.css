@@ -1503,3 +1503,39 @@ body.touch #gear .k {
 #bm.ready svg, #bd.ready svg {
   fill: #ffd36a;
 }
+
+/* the lab buttons also show on laptops, as round reload gauges with their key underneath */
+#bm, #bd {
+  position: relative;
+}
+
+#bm[hidden] {
+  display: none;
+}
+
+body:not(.touch)[data-state="play"] #touch-left,
+body:not(.touch)[data-state="play"] #touch-right {
+  display: flex;
+}
+
+body:not(.touch) #be, body:not(.touch) #bq, body:not(.touch) #bv, body:not(.touch) #bf {
+  display: none;
+}
+
+body:not(.touch) #touch-left, body:not(.touch) #touch-right {
+  bottom: calc(84px + var(--sb));
+}
+
+#bm:not([data-key=""])::after, #bd:not([data-key=""])::after {
+  content: attr(data-key);
+  position: absolute;
+  bottom: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 6px;
+  font: 800 11px system-ui, sans-serif;
+  color: #ffd36a;
+  background: #0b0e18;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}

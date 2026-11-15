@@ -398,27 +398,52 @@ class Game {
   }
 
   // ---- Nuclear Nadal's Lab: the Pointy Hand Missile and the Pointy Beard of Doom
-  get hm_max() { return 14 - 3 * (this.up.hand || 0); }          // seconds to reload the hand missile
+  get hm_max() { return 10 - 2 * Math.max(1, this.up.hand || 0); }          // seconds to reload the hand missile
 
   verdict() { return random.choice(['ELECTION CANCELLED', 'ELECTION POSTPONED', 'ELECTION RIGGED']); }
 
-  threat() {                                      // what a missile chases: the nearest robot or drone, else anything in the way
+  threat() {                                      // what a missile locks onto: the nearest robot or drone, else a ballot box or a rival
     const s = this;
     let best = null, bz = -70;
-    const see = (o, h) => { if (!o.dead && o.z < -3 && o.z > bz) { bz = o.z; best = { o, h }; } };
-    for (const c of s.clones) see(c, 1.1);
-    for (const dr of s.drones) see(dr, dr.y);
+    const see = (o, h, k) => { if (!o.dead && o.z < -3 && o.z > bz) { bz = o.z; best = { o, h, k }; } };
+    for (const c of s.clones) see(c, 1.1, 'clone');
+    for (const dr of s.drones) see(dr, dr.y, 'drone');
     if (best) return best;
-    for (const r of s.rivals) see(r, 1.1);
-    for (const o of s.obs) see(o, 0.9);
+    for (const o of s.obs) if (o.k == 'crate') see(o, 0.9, 'crate');
+    for (const r of s.rivals) see(r, 1.1, 'rival');
     return best;
   }
 
-  missile() {                                     // leaves his hand and finds its own way
+  strike(to) {                                    // a hand missile destroys its target, and nothing else
+    const s = this, o = to.o, x = s.rx(o.x, o.z);
+    if (to.k == 'drone') s.drone_down(o);
+    else if (to.k == 'rival') s.rival_out(o, RIVAL_COLS[o.c][0]);
+    else if (to.k == 'crate') {
+      o.dead = true;
+      s.score += 20 * s.mult;
+      s.burst(x, 1, o.z, [0.7, 0.45, 0.2], 18);
+      s.pop(x, 2.4, o.z, s.verdict(), [0.75, 0.88, 1]);
+    } else {
+      o.dead = true;
+      s.kills += 1; s.chain += 1;
+      s.score += 50 * s.mult;
+      s.burst(x, 1.2, o.z, [0.9, 0.3, 0.1], 24);
+      s.pop(x, 2.6, o.z, `+${50 * s.mult}`, [1, 0.7, 0.3]);
+      Bus.emit('say', 'demo');
+    }
+    s.booms.push({ x, y: to.h, z: o.z, r: 2.6, t: 0.4, T: 0.4 });
+    s.shake = Math.max(s.shake, 0.3);
+    Snd.play('boom');
+    buzz(40);
+  }
+
+  missile() {                                     // leaves his hand and flies to the locked target
     const s = this;
-    if (s.state != 'play' || s.hm_cd > 0) return;
+    if (s.state != 'play' || !s.up.hand || s.hm_cd > 0) return;
+    const to = s.threat();
+    if (!to) { Snd.play('click'); return; }       // nothing to lock onto: keep the missile
     const [hx, hy, hz] = s.hand;
-    s.ms.push({ k: 'hand', x: hx, y: hy + 0.15, z: hz - 0.4, vx: 0, vy: 6, vz: -20, t: 0, to: s.threat() });
+    s.ms.push({ k: 'hand', x: hx, y: hy + 0.15, z: hz - 0.4, vx: 0, vy: 5, vz: -24, t: 0, to });
     s.hm_cd = s.hm_max;
     s.scare = 1.5; s.aim_t = 0.5;
     Bus.emit('shot'); Bus.emit('say', 'missile');
@@ -891,18 +916,19 @@ class Game {
         if (m.t >= T) { m.dead = true; s.blast(tx, 0.5, -30, 70, true); }
         continue;
       }
-      if (!m.to || m.to.o.dead) m.to = s.threat();               // the target is gone: pick another
+      if (m.to && m.to.o.dead) m.to = s.threat();                // someone else got it first: lock onto the next one
       const to = m.to;
       const tx = to ? s.rx(to.o.x, to.o.z) : m.x, ty = to ? to.h : 1.2, tz = to ? to.o.z : m.z - 30;
       const dx = tx - m.x, dy = ty - m.y, dz = tz - m.z, dist = Math.hypot(dx, dy, dz) || 1;
-      const v = Math.min(48, 22 + 45 * m.t), turn = Math.min(1, 8 * dt);
+      const v = Math.min(60, 30 + 60 * m.t), turn = Math.min(1, 12 * dt);
       m.vx += (dx / dist * v - m.vx) * turn; m.vy += (dy / dist * v - m.vy) * turn; m.vz += (dz / dist * v - m.vz) * turn;
       m.x += m.vx * dt; m.y += m.vy * dt; m.z += m.vz * dt;
       s.flames.push([m.x, m.y, m.z + 0.5, random.uniform(-0.6, 0.6), random.uniform(-0.3, 0.6), 6, 0.22, 0.22]);
       s.parts.push([m.x, m.y, m.z + 0.6, random.uniform(-0.5, 0.5), random.uniform(0.2, 1.2), 4, random.uniform(0.3, 0.6), [0.82, 0.82, 0.84]]);
-      if ((to && dist < 1.6) || m.y < 0.15 || m.t > 2.5 || (!to && m.z < -42)) {
+      if (to && dist < 1.4) { m.dead = true; s.strike(to); }
+      else if (m.t > 2.5 || m.y < 0.1 || (!to && m.z < -42)) {   // nothing left to hit: it fizzles harmlessly
         m.dead = true;
-        s.blast(m.x, Math.max(0.6, m.y), m.z, 3.5 + 0.8 * (s.up.hand || 0));
+        s.booms.push({ x: m.x, y: Math.max(0.6, m.y), z: m.z, r: 1.6, t: 0.3, T: 0.3 });
       }
     }
 
@@ -1057,7 +1083,7 @@ class Game {
       s.next_tape = s.D + TAPE_GAP;
     }
     for (const tp of s.tapes) {
-      tp.z += (sp + 5) * dt;
+      tp.z += sp * dt;                                         // the officials stand still at the line
       if (tp.z >= 0 && !tp.won) {
         tp.won = true;
         s.medals += 1;
@@ -1324,10 +1350,13 @@ function draw_player() {
   glTranslatef(g.px, g.py, 0);
   const sk = SKINS.find(k => k.id == Store.d.skin) || SKINS[0];
   const act = Actors.player(sk.model, sk.kit), air = Math.min(1, g.py * 1.6);
+  // the victory V: he runs facing -z, so his right hand is on +x. The right fist pumps up and down.
+  const ch = Math.min(1, g.cheer * 2.5), pmp = 0.5 + 0.5 * Math.sin(g.t * 11);
+  const reach = ch > 0 ? [[[0.42, 0.8 + 0.35 * pmp, -0.12], ch, 'Right'], [[-0.55, 0.85, -0.12], ch, 'Left']] : null;
   if (act) {                                                     // the rigged model, once it has loaded
     const pace = g.speed * (g.boost > 0 ? 1.5 : 1.0);
     act.show({ x: g.px, y: g.py, z: 0, dt: FDT, slide, air, tint: sk.tint, dir: g.state == 'play' ? g.lean : 0,
-               cheer: Math.min(1, g.cheer * 2.5), tired: Math.min(1, g.tired * 2),
+               cheer: ch, pump: ch * pmp, reach, tired: Math.min(1, g.tired * 2),
                aim: g.aim, aimK: g.state == 'play' ? Math.min(1, g.aim_t * 6) : 0,
                rate: g.state == 'menu' ? 0.6 : Math.max(0.6, Math.min(2.0, pace / 14)) });
   } else {
@@ -1407,25 +1436,35 @@ function draw_rival(r) {                                         // athlete seen
 }
 
 
-function draw_tape(tp) {                                         // two of his officials jog the finish line out to you
+function draw_tape(tp) {                                         // two of his officials stand at the line, holding the tape out
   const z = tp.z, o = g.off(z);
   tp.id = tp.id || ++TAPE_ID;
+  const ends = [];
   for (const sd of [-1, 1]) {
-    const x = o + sd * 5.4;
+    const x = o + sd * 5.3;
     shadow(x, z, 0.7, 0.35);
     const a = Q.rig ? Actors.cast('tape' + tp.id + sd, 'man', 'official') : null;
     if (a) {
-      a.show({ x, y: 0, z, dt: FDT, rate: 0.9, yaw: Math.atan2(-tangent(z), 1), tint: SUIT });
+      // facing the runner, so the tape is on the official's left on the left side and right on the right side
+      const arm = sd < 0 ? 'Left' : 'Right';
+      a.show({ x, y: 0, z, dt: FDT, rate: 1, stand: 1, yaw: Math.atan2(-tangent(z), 1), tint: SUIT,
+               arm, aim: tp.won ? [sd * 0.3, -1, 0.2] : [-sd, -0.18, 0.12], aimK: 1 });
+      const p = a.hand(arm);
+      if (p) ends.push(p);
       continue;
     }
     glPushMatrix(); glTranslatef(x, 0, z); glRotatef(oncoming(z), 0, 1, 0);
-    human(g.t * 9, { vest: SUIT.top, pants: SUIT.top, hair: [0.05, 0.05, 0.05] }, {});
+    human(0, { vest: SUIT.top, pants: SUIT.top, hair: [0.05, 0.05, 0.05] }, {});
     glPopMatrix();
   }
   if (tp.won) return;                                            // you broke the tape
-  box(o, 1.2, z, 10.4, 0.16, 0.04, [1, 1, 1], true);
-  box(o, 1.2, z + 0.03, 10.4, 0.05, 0.04, GOLD, true);
-  for (const sd of [-1, 0, 1]) glow(o + sd * 3.4, 1.2, z + 0.1, 1.6, GOLD, 0.3);
+  let cx = o, cy = 1.2, w = 10.4;
+  if (ends.length == 2) {                                        // stretched from one hand to the other
+    cx = (ends[0].x + ends[1].x) / 2; cy = (ends[0].y + ends[1].y) / 2; w = Math.abs(ends[1].x - ends[0].x);
+  }
+  box(cx, cy, z, w, 0.16, 0.04, [1, 1, 1], true);
+  box(cx, cy, z + 0.03, w, 0.05, 0.04, GOLD, true);
+  for (const sd of [-1, 0, 1]) glow(cx + sd * w / 3, cy, z + 0.1, 1.6, GOLD, 0.3);
 }
 
 
@@ -1598,6 +1637,40 @@ const seats = seed0 => [512, 68, (c, w, h) => {
   }
   c.fillStyle = '#62657a'; c.fillRect(0, h - 3, w, 3);            // the lip of the step
 }];
+// his supporters, along the road in every location: a still picture, standing behind a barrier
+const fans = seed0 => [512, 160, (c, w, h) => {
+  let seed = seed0;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const pick = a => rgb(a[Math.floor(rnd() * a.length)]);
+  c.clearRect(0, 0, w, h);
+  let n = 0;
+  for (let x = 16; x < w - 10; x += 25 + rnd() * 5, n++) {
+    const top = 52 + rnd() * 10, shirt = pick(CROWD), skin = pick(FACES), pose = n % 5 == 2 ? 3 : Math.floor(rnd() * 3);
+    c.fillStyle = '#24283a'; c.fillRect(x - 7, top + 50, 6, h - top - 50); c.fillRect(x + 1, top + 50, 6, h - top - 50);   // legs
+    c.fillStyle = shirt; c.fillRect(x - 9, top + 14, 18, 38);                                                               // body
+    c.beginPath(); c.arc(x, top + 16, 9, 3.14, 6.29); c.fill();
+    c.lineWidth = 5; c.lineCap = 'round'; c.strokeStyle = shirt;
+    const arm = (sx, ex, ey) => { c.beginPath(); c.moveTo(x + sx, top + 17); c.lineTo(x + ex, top + ey); c.stroke(); };
+    if (pose == 0) { arm(-8, -17, -8); arm(8, 17, -8); }          // both arms up
+    else if (pose == 1) { arm(-8, -12, 44); arm(8, 13, -10); }     // one fist up
+    else { arm(-8, -12, 44); arm(8, 14, 2); }                     // holding a flag or a sign
+    c.fillStyle = skin;
+    c.fillRect(x - 3, top + 4, 6, 8);
+    c.beginPath(); c.arc(x, top, 8, 0, 6.3); c.fill();
+    c.fillStyle = '#17110d'; c.beginPath(); c.arc(x, top - 2, 8.2, 3.2, 6.2); c.fill();
+    if (pose == 2) {                                              // a Wadiyan flag on a pole
+      c.fillStyle = '#ddd'; c.fillRect(x + 13, top - 34, 2, 40);
+      c.fillStyle = '#128a48'; c.fillRect(x + 15, top - 34, 20, 13);
+      c.fillStyle = '#f2bf26'; c.fillRect(x + 15, top - 29, 20, 3);
+    } else if (pose == 3) {                                       // a sign held up for the Supreme Leader
+      c.fillStyle = '#8a6a42'; c.fillRect(x + 12, top - 22, 3, 28);
+      c.fillStyle = '#f4f1e6'; c.fillRect(x - 18, top - 50, 62, 28);
+      c.strokeStyle = '#128a48'; c.lineWidth = 3; c.strokeRect(x - 18, top - 50, 62, 28);
+      c.fillStyle = '#128a48'; c.font = '900 13px Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(rnd() < 0.5 ? 'ALADEEN' : 'WE ♥ HIM', x + 13, top - 36);
+    }
+  }
+}];
 const PAINT = {
   ballot: [256, 144, (c, w, h) => {
     c.fillStyle = '#f4f4f8'; c.fillRect(0, 0, w, h);
@@ -1605,7 +1678,7 @@ const PAINT = {
     c.fillText('BALLOT', w / 2, 52);
     c.font = '700 26px Arial, sans-serif'; c.fillText('DEMOCRACY INSIDE', w / 2, 104);
   }],
-  seats0: seats(7), seats1: seats(1234),
+  seats0: seats(7), seats1: seats(1234), fans0: fans(99), fans1: fans(4242),
   // the Supreme Leader, larger than life, on the back wall
   banner: [256, 288, (c, w, h) => {
     c.fillStyle = '#128a48'; c.fillRect(0, 0, w, h);
@@ -1742,6 +1815,13 @@ function draw_scenery(e) {
     for (const side of [-1, 1]) {
       const h = (j * 73856093 + side * 83492791) & 0xFFFF;
       fn(side, h, j, z, e);
+      if (L.kind != 'stadium' && pymod(j, 2) == 1) {             // his supporters line the road everywhere
+        glPushMatrix(); glTranslatef(side * 7.7, 1.25, z); glRotatef(-side * 90, 0, 1, 0);
+        glColor3f(1, 1, 1); glTexQuad(tex('fans' + (h & 1)), 8, 2.5);
+        glPopMatrix();
+        box(side * 7.15, 0.4, z, 0.08, 0.8, 8.2, [0.1, 0.5, 0.28]);
+        box(side * 7.15, 0.82, z, 0.12, 0.06, 8.2, GOLD);
+      }
       if (pymod(j, 2) == 0) {
         let lc = L.lamp;
         if (L.kind == 'city' && pymod(j, 4) == 0) lc = [1.0, 0.3, 0.85];
@@ -2131,6 +2211,25 @@ function draw_hud() {
   if (g.speed > 22) speed_lines();
   if (g.pops.length) draw_pops();
   if (inputMode == 'mouse') reticle();
+  if (g.up.hand && g.hm_cd <= 0) {                               // the hand missile's lock: a red bracket on its target
+    const to = g.threat();
+    if (to) {
+      pv.set(g.rx(to.o.x, to.o.z), to.h, to.o.z).project(cam);
+      if (pv.z < 1) {
+        const x = (pv.x + 1) / 2 * WIN[0], y = (1 - pv.y) / 2 * WIN[1], r = Math.max(18, Math.min(40, 640 / -to.o.z));
+        const q = r * 0.45, t = 1 + 0.08 * Math.sin(g.t * 10);
+        for (const [lw, col] of [[6, 'rgba(0,0,0,0.6)'], [3, 'rgba(255,60,40,1)']]) {   // dark outline, red core
+          ctx.lineWidth = lw; ctx.strokeStyle = col;
+          ctx.beginPath();
+          for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const cx_ = x + sx * r * t, cy_ = y + sy * r * t;
+            ctx.moveTo(cx_, cy_ - sy * q); ctx.lineTo(cx_, cy_); ctx.lineTo(cx_ - sx * q, cy_);
+          }
+          ctx.stroke();
+        }
+      }
+    }
+  }
 }
 
 
@@ -2431,7 +2530,10 @@ addEventListener('pointercancel', e => touches.delete(e.pointerId));
 function touchKey(id, key) {
   $(id).addEventListener('pointerdown', e => { e.preventDefault(); Snd.unlock(); set_mode('touch'); keyboard(key, g.mx, g.my); });
 }
-touchKey('bv', 'v'); touchKey('be', 'e'); touchKey('bq', 'q'); touchKey('bm', 'x'); touchKey('bd', 'c');
+touchKey('bv', 'v'); touchKey('be', 'e'); touchKey('bq', 'q');
+for (const [id, fn] of [['bm', () => g.missile()], ['bd', () => g.doom_call()]]) {   // clickable with a mouse too, without switching to touch mode
+  $(id).addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); Snd.unlock(); if (e.pointerType != 'mouse') set_mode('touch'); fn(); });
+}
 $('bf').addEventListener('pointerdown', e => { e.preventDefault(); Snd.unlock(); set_mode('touch'); g.fire_on = g.state == 'play'; });
 for (const n of ['pointerup', 'pointercancel', 'pointerleave']) $('bf').addEventListener(n, () => (g.fire_on = false));
 document.body.classList.toggle('touch', isTouch);
