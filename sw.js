@@ -7,7 +7,7 @@
  *
  * Bump CACHE whenever the files below change in a release: that clears the old copy.
  */
-const CACHE = 'dictators-dash-v4.6.1';
+const CACHE = 'dictators-dash-v4.7.0';
 const FILES = [
   './',
   'index.html',
@@ -24,6 +24,8 @@ const FILES = [
   'web/audio/chant-zoey.wav',
   'web/audio/chant-wadiya.wav',
   'web/audio/scream.wav',
+  'web/audio/roar.wav',
+  'web/audio/crowd-loop.wav',
   'web/js/actors.js',
   'web/js/core.js',
   'web/js/glshim.js',

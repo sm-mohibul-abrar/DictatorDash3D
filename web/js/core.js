@@ -91,7 +91,8 @@ const NADAL = ['Welcome to Nuclear Nadal\'s Lab. No refunds. No questions.',
 // The crowd's voice: short clips mixed from real spoken words (see README). Swap a file to change a voice;
 // if one is missing the game falls back to a synthesised chant.
 const AUDIO_FILES = { aladeen: 'web/audio/chant-aladeen.wav', zoey: 'web/audio/chant-zoey.wav',
-                      wadiya: 'web/audio/chant-wadiya.wav', scream: 'web/audio/scream.wav' };
+                      wadiya: 'web/audio/chant-wadiya.wav', scream: 'web/audio/scream.wav',
+                      roar: 'web/audio/roar.wav', crowd: 'web/audio/crowd-loop.wav' };
 
 // Achievements. t(run, stats, profile) -> unlocked?  'run' is Game.summary().
 const ACHS = [
@@ -229,7 +230,7 @@ const Snd = (() => {
     medal() { [523, 659, 784, 1047].forEach((f, i) => tone(f, i == 3 ? 0.45 : 0.14, { type: 'square', vol: 0.07, at: i * 0.1 })); },
     over() { [392, 330, 262, 196].forEach((f, i) => tone(f, 0.3, { type: 'triangle', vol: 0.14, at: i * 0.16 })); },
     click() { tone(660, 0.05, { type: 'square', vol: 0.035 }); },
-    cheer() { noise(1.6, { vol: 0.2, lp: 1800 }); noise(1.2, { vol: 0.12, hp: 2500, at: 0.1 }); },
+    cheer() { if (!clip('roar')) { noise(1.6, { vol: 0.2, lp: 1800 }); noise(1.2, { vol: 0.12, hp: 2500, at: 0.1 }); } },   // the stadium erupts
     launch() { noise(0.5, { vol: 0.22, hp: 700 }); tone(240, 0.5, { to: 900, type: 'sawtooth', vol: 0.05 }); },
     incoming() { tone(1900, 1.5, { to: 320, vol: 0.14 }); noise(1.5, { vol: 0.06, hp: 2000 }); },
     doom() { noise(1.5, { vol: 0.5, lp: 480 }); noise(0.5, { vol: 0.3, lp: 2600 }); tone(90, 1.3, { to: 28, vol: 0.5 }); },
@@ -253,18 +254,25 @@ const Snd = (() => {
   }
 
   // ---- the crowd: a low murmur of filtered noise while a run is on
-  let crowdG = null;
+  // ---- the stands while a run is on: a looped recording of a real crowd (filtered noise until it has loaded)
+  let crowdG = null, crowdSrc = null, crowdReal = false, crowdOn = false;
   function crowd(on) {
+    crowdOn = on;
     if (!ok()) return;
-    if (!crowdG) {
-      const src = AC.createBufferSource(), fl = AC.createBiquadFilter();
-      src.buffer = nbuf; src.loop = true;
+    load('crowd');
+    if (!crowdG) { crowdG = AC.createGain(); crowdG.gain.value = 0; crowdG.connect(sfxG); }
+    if (!crowdReal && bufs.crowd) {
+      if (crowdSrc) crowdSrc.stop();
+      crowdSrc = AC.createBufferSource(); crowdSrc.buffer = bufs.crowd; crowdSrc.loop = true;
+      crowdSrc.connect(crowdG); crowdSrc.start();
+      crowdReal = true;
+    } else if (!crowdSrc) {
+      const fl = AC.createBiquadFilter();
+      crowdSrc = AC.createBufferSource(); crowdSrc.buffer = nbuf; crowdSrc.loop = true;
       fl.type = 'bandpass'; fl.frequency.value = 900; fl.Q.value = 0.4;
-      crowdG = AC.createGain(); crowdG.gain.value = 0;
-      src.connect(fl); fl.connect(crowdG); crowdG.connect(sfxG);
-      src.start();
+      crowdSrc.connect(fl); fl.connect(crowdG); crowdSrc.start();
     }
-    crowdG.gain.setTargetAtTime(on ? 0.03 : 0, AC.currentTime, 0.4);
+    crowdG.gain.setTargetAtTime(on ? (crowdReal ? 0.11 : 0.03) : 0, AC.currentTime, 0.4);
   }
 
   // ---- the crowd's voice. A vowel is a buzzing source through two formant filters; a chant is a
@@ -293,7 +301,7 @@ const Snd = (() => {
     if (bufs[name] !== undefined || !AUDIO_FILES[name]) return;
     bufs[name] = null;
     fetch(AUDIO_FILES[name]).then(r => r.arrayBuffer())
-      .then(b => AC.decodeAudioData(b, d => (bufs[name] = d), () => (bufs[name] = false)))
+      .then(b => AC.decodeAudioData(b, d => { bufs[name] = d; if (name == 'crowd') crowd(crowdOn); }, () => (bufs[name] = false)))
       .catch(() => (bufs[name] = false));
   }
   function preload() { for (const k in AUDIO_FILES) load(k); }
@@ -319,7 +327,7 @@ const Snd = (() => {
   function chant(name, reps) {                      // "A-la-DEEN! A-la-DEEN!"
     if (!ok()) return;
     duck(reps * 0.9 + 0.5);
-    if (clip(name, reps, 0.9)) return;
+    if (clip(name, reps, 0.95)) return;
     const syl = CHANTS[name] || CHANTS.aladeen;
     let t = AC.currentTime + 0.05;
     for (let r = 0; r < reps; r++) {
@@ -348,7 +356,7 @@ const Snd = (() => {
                 3, _, 4, 3, 2, _, 1, _, 2, _, 3, _, 5, _, 4, _,
                 1, _, 2, 1, 0, _, 1, _, 2, _, 1, _, 0, _, _, _];
   const ROOTS = [0, 0, 5, 1];                       // bass root of each bar, in semitones above D
-  const STEP = 60 / 116 / 4;                        // one sixteenth note
+  const STEP = 60 / 108 / 4;                        // one sixteenth note
   const hz = (base, semi) => base * Math.pow(2, semi / 12);
   let mood = -1, step = 0, nextT = 0, timer = 0;
 
@@ -358,18 +366,26 @@ const Snd = (() => {
     if (s == 0) {                                   // a held chord under each bar, so the track never drops to nothing
       for (const semi of [0, 7]) tone(hz(146.83, ROOTS[bar] + semi), STEP * 16, { t, type: 'triangle', vol: 0.07, hold: 0.85, out: musG });
     }
-    if ([0, 3, 6, 8, 11, 14].includes(s)) {
-      tone(hz(73.42, ROOTS[bar]), 0.22, { t, type: 'triangle', vol: 0.3, hold: 0.5, out: musG });
-      tone(hz(146.83, ROOTS[bar]), 0.2, { t, type: 'square', vol: 0.05, hold: 0.5, out: musG });   // an octave up, so small speakers carry the bass line
+    if (s % 4 == 0) {                               // a march bass: oom (root) on the beat, pah (fifth) on the off-beat
+      const semi = ROOTS[bar] + (s % 8 ? 7 : 0);
+      tone(hz(73.42, semi), 0.24, { t, type: 'triangle', vol: 0.32, hold: 0.5, out: musG });
+      tone(hz(146.83, semi), 0.2, { t, type: 'square', vol: 0.05, hold: 0.5, out: musG });   // an octave up, so small speakers carry it
     }
     const n = LEAD[i];
     if (n !== null) {
-      tone(hz(293.66, SCALE[n % 7] + 12 * Math.floor(n / 7)), 0.26, { t, type: 'square', vol: full ? 0.12 : 0.08, hold: 0.6, out: musG });
+      const f = hz(293.66, SCALE[n % 7] + 12 * Math.floor(n / 7));   // a brassy lead: square and saw, a hair apart
+      tone(f, 0.26, { t, type: 'square', vol: full ? 0.09 : 0.07, hold: 0.6, out: musG });
+      tone(f * 1.004, 0.26, { t, type: 'sawtooth', vol: full ? 0.05 : 0.03, hold: 0.6, out: musG });
     }
     if (!full) return;
-    if (s % 8 == 0) tone(130, 0.14, { t, to: 45, vol: 0.4, out: musG });
-    if (s % 8 == 4) noise(0.09, { t, vol: 0.2, lp: 2600, out: musG });
-    if (s % 2 == 1) noise(0.03, { t, vol: 0.06, hp: 6000, out: musG });
+    // the military band: a bass drum on 1 and 3, the snare on 2 and 4 with a roll into every fourth bar,
+    // and a darbuka's dum-tek between them
+    if (s % 8 == 0) tone(110, 0.2, { t, to: 42, vol: 0.45, out: musG });
+    if (s % 8 == 4) { noise(0.12, { t, vol: 0.24, hp: 1300, out: musG }); tone(190, 0.06, { t, vol: 0.1, out: musG }); }
+    if (bar == 3 && s >= 12) noise(0.05, { t, vol: 0.1 + 0.03 * (s - 12), hp: 1500, out: musG });
+    if (s % 8 == 3 && bar != 3) noise(0.04, { t, vol: 0.1, hp: 1500, out: musG });   // the flam just before the snare
+    if (s % 4 == 2) noise(0.025, { t, vol: 0.07, hp: 4500, out: musG });
+    if (s % 8 == 6) tone(420, 0.05, { t, to: 300, vol: 0.06, out: musG });
   }
 
   function pump() {
