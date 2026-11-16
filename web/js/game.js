@@ -279,6 +279,7 @@ class Game {
 
   pop(x, y, z, text, c) {                         // floating label at a world position
     this.pops.push({ x, y, z, s: text, c, t: 1.0 });
+    if (VOICE[text]) Snd.speak(text, true);       // the stadium announcer reads it out, if he is not busy
   }
 
   to_menu() {
@@ -400,7 +401,7 @@ class Game {
   // ---- Nuclear Nadal's Lab: the Pointy Hand Missile and the Pointy Beard of Doom
   get hm_max() { return 10 - 2 * Math.max(1, this.up.hand || 0); }          // seconds to reload the hand missile
 
-  verdict() { return random.choice(['ELECTION CANCELLED', 'ELECTION POSTPONED', 'ELECTION RIGGED']); }
+  verdict() { Snd.play('ballot'); return random.choice(['ELECTION CANCELLED', 'ELECTION POSTPONED', 'ELECTION RIGGED']); }
 
   threat() {                                      // what a missile locks onto: the nearest robot or drone, else a ballot box or a rival
     const s = this;
@@ -659,7 +660,7 @@ class Game {
     s.burst(x, dr.y, dr.z, [0.5, 0.85, 1.0], 20);
     s.burst(x, dr.y, dr.z, [1.0, 0.6, 0.1], 14);
     s.pop(x, dr.y + 0.9, dr.z, `+${75 * s.mult}`, [0.6, 0.9, 1.0]);
-    Snd.play('boom');
+    Snd.play('drone');
   }
 
   pause() {

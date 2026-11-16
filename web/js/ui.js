@@ -106,12 +106,15 @@ const UIX = (() => {
   let quoteT = 0, quoteAt = -99;
   function say(kind) {
     const must = kind == 'start' || kind == 'win' || kind == 'tired';
+    if (kind == 'start' && g.state == 'play') Snd.speak('ann-event-1');   // the announcer calls the first event
     if (!talks() || g.state != 'play') return;
     if (!must && (g.t - quoteAt < 5 || Math.random() < 0.35)) return;   // do not talk over himself, and not every time
     quoteAt = g.t;
     const q = el('quote');
     el('quote-who').textContent = P.skin == 'double' ? 'EFAWADH (AS ALADEEN)' : 'ALADEEN';
-    el('quote-t').textContent = say_line(kind);
+    const line = say_line(kind);
+    el('quote-t').textContent = line;               // the speech box stays as a subtitle
+    Snd.speak(line);
     q.hidden = true;
     void q.offsetWidth;                             // restart the CSS animation
     q.hidden = false;
@@ -119,7 +122,7 @@ const UIX = (() => {
     quoteT = setTimeout(() => (q.hidden = true), 3600);
   }
   Bus.on('say', say);
-  Bus.on('medal', () => say('win'));
+  Bus.on('medal', () => { if (talks()) Snd.speak('GOLD MEDAL'); say('win'); });
 
   // ---- the crowd: a chant for whoever is running, and a scream when the pistol goes off
   const cheer_name = () => P.skin == 'zoey' ? 'zoey' : P.skin == 'guard' ? 'wadiya' : 'aladeen';   // the double is cheered as Aladeen
@@ -175,6 +178,7 @@ const UIX = (() => {
     el('over-title').textContent = r.medals > 1 ? `GOLD MEDAL x${r.medals}` : 'GOLD MEDAL';
     el('over-quip').textContent = !talks() ? 'A clean race. The stopwatch does not take bribes.'
       : r.medals ? say_line('over') : 'An honorary gold. Turning up counts as winning when you write the rules.';
+    if (talks() && r.medals) Snd.speak(el('over-quip').textContent);
     el('over-best').hidden = !r.best;
     el('over-stats').innerHTML =
       stat(fmt(r.score), 'Score') + stat(fmt(Math.max(r.hi, r.score)), `Best · ${DIFFS[r.di].name}`) +
@@ -352,6 +356,7 @@ const UIX = (() => {
     for (const b of el('q-segs').children) b.classList.toggle('on', b.dataset.q == SET.quality);
     el('set-music').value = SET.music;
     el('set-sfx').value = SET.sfx;
+    el('set-voice').value = SET.voice == null ? 1 : SET.voice;
     for (const k of ['autoaim', 'shake', 'haptics', 'fps']) el('set-' + k).checked = !!SET[k];
     el('btn-fs').hidden = !document.documentElement.requestFullscreen;
   }
@@ -374,7 +379,7 @@ const UIX = (() => {
   function open(name) {
     close();
     modal = el('m-' + name);
-    if (name == 'nadal') nadalLine = '"' + NADAL[Math.floor(Math.random() * NADAL.length)] + '"';
+    if (name == 'nadal') { const l = NADAL[Math.floor(Math.random() * NADAL.length)]; nadalLine = '"' + l + '"'; Snd.speak(l); }
     if (RENDER[name]) RENDER[name]();
     modal.hidden = false;
     modal.scrollTop = 0;
@@ -390,6 +395,8 @@ const UIX = (() => {
   el('set-music').addEventListener('input', e => { SET.music = +e.target.value; Snd.volumes(); Store.save(); });
   el('set-sfx').addEventListener('input', e => { SET.sfx = +e.target.value; Snd.volumes(); Store.save(); });
   el('set-sfx').addEventListener('change', () => Snd.play('coin'));
+  el('set-voice').addEventListener('input', e => { SET.voice = +e.target.value; Snd.volumes(); Store.save(); });
+  el('set-voice').addEventListener('change', () => Snd.speak('VIP PASS'));
   for (const k of ['autoaim', 'shake', 'haptics', 'fps']) {
     el('set-' + k).addEventListener('change', e => {
       SET[k] = e.target.checked;

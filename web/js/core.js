@@ -88,11 +88,22 @@ const NADAL = ['Welcome to Nuclear Nadal\'s Lab. No refunds. No questions.',
                'For you, Supreme Leader, a special price: the full one.',
                'Every gadget tested personally by my cousin. He sends his regards from hospital.'];
 
-// The crowd's voice: short clips mixed from real spoken words (see README). Swap a file to change a voice;
-// if one is missing the game falls back to a synthesised chant.
-const AUDIO_FILES = { aladeen: 'web/audio/chant-aladeen.wav', zoey: 'web/audio/chant-zoey.wav',
-                      wadiya: 'web/audio/chant-wadiya.wav', scream: 'web/audio/scream.wav',
-                      roar: 'web/audio/roar.wav', crowd: 'web/audio/crowd-loop.wav' };
+// Recorded sound, made with ElevenLabs (see README). Every file is optional: if one is missing the game
+// falls back to its synthesised sound, so a file can be swapped or removed freely.
+const AUDIO_FILES = { aladeen: 'web/audio/chant-aladeen.mp3', zoey: 'web/audio/chant-zoey.mp3',
+                      wadiya: 'web/audio/chant-wadiya.mp3', scream: 'web/audio/scream.mp3',
+                      roar: 'web/audio/roar.mp3', crowd: 'web/audio/crowd-loop.mp3' };
+const SFX_FILES = ['pistol', 'missile-launch', 'missile-hit', 'doom-incoming', 'doom-blast', 'ballot-box', 'coin', 'powerup',
+                   'jump', 'slide', 'hurt', 'whistle', 'gameover', 'medal', 'click', 'purchase', 'pant', 'drone-down'];
+for (const n of SFX_FILES) AUDIO_FILES['sfx-' + n] = `web/audio/sfx-${n}.mp3`;
+
+// Spoken lines (web/audio/voice): each line on screen has a recording, found by its text.
+const VOICE = {};
+for (const k in LINES) if (k != 'menu') LINES[k].forEach((t, i) => (VOICE[t] = `vo-${k}-${i + 1}`));
+NADAL.forEach((t, i) => (VOICE[t] = `nadal-${i + 1}`));
+Object.assign(VOICE, { 'GOLD MEDAL': 'ann-gold', DISQUALIFIED: 'ann-dq', 'ELECTION CANCELLED': 'ann-cancelled',
+                       'ELECTION POSTPONED': 'ann-postponed', 'ELECTION RIGGED': 'ann-rigged', 'BEARD OF DOOM': 'ann-doom',
+                       'VIP PASS': 'ann-vip', 'RAPID FIRE': 'ann-rapid', 'ROCKET BOOTS': 'ann-rocket' });
 
 // Achievements. t(run, stats, profile) -> unlocked?  'run' is Game.summary().
 const ACHS = [
@@ -116,7 +127,7 @@ const Store = (() => {
   const KEY = 'dictators-dash.profile';
   const fresh = () => ({
     v: 1,
-    set: { quality: 'auto', music: 0.45, sfx: 0.8, haptics: true, shake: true, autoaim: true, fps: false },
+    set: { quality: 'auto', music: 0.45, sfx: 0.8, voice: 1, haptics: true, shake: true, autoaim: true, fps: false },
     bank: 0, skin: 'general', owned: ['general'], up: {}, ach: {}, locs: {}, runs_seen: 0,
     stats: { runs: 0, dist: 0, coins: 0, kills: 0, rivals: 0, medals: 0, time: 0, mult: 1, score: 0 }
   });
@@ -155,7 +166,7 @@ function buzz(p) {
 
 // ------------------------------------------------------------------ audio
 const Snd = (() => {
-  let AC = null, sfxG = null, musG = null, duckG = null, nbuf = null;
+  let AC = null, sfxG = null, voG = null, musG = null, duckG = null, nbuf = null;
   const ok = () => AC && AC.state === 'running';
 
   function unlock() {                               // browsers only allow audio after a user gesture
@@ -166,6 +177,7 @@ const Snd = (() => {
         comp.connect(AC.destination);
         sfxG = AC.createGain(); musG = AC.createGain(); duckG = AC.createGain();
         sfxG.connect(comp);
+        voG = AC.createGain(); voG.connect(comp);             // spoken lines have their own volume
         const lim = AC.createDynamicsCompressor();             // music has its own path: loud effects can never squash it
         lim.threshold.value = -8; lim.ratio.value = 12;
         musG.connect(duckG); duckG.connect(lim); lim.connect(AC.destination);
@@ -183,6 +195,7 @@ const Snd = (() => {
     if (!AC) return;
     sfxG.gain.value = SET.sfx;
     musG.gain.value = SET.music;
+    voG.gain.value = SET.voice == null ? 1 : SET.voice;
   }
 
   // o: type, vol, to (pitch slide target), at (delay), t (absolute time), out (gain node), hold (share of the note at full level)
@@ -215,26 +228,29 @@ const Snd = (() => {
     src.start(t, Math.random() * 0.5); src.stop(t + d + 0.02);
   }
 
+  const rec = (n, v = 0.8) => !!bufs['sfx-' + n] && clip('sfx-' + n, 1, 0, v);   // the recording, if it has loaded
   const LIB = {
-    coin() { tone(1319, 0.07, { type: 'square', vol: 0.05 }); tone(1976, 0.13, { type: 'square', vol: 0.05, at: 0.06 }); },
-    jump() { tone(300, 0.16, { to: 640, type: 'triangle', vol: 0.12 }); },
-    slide() { noise(0.2, { vol: 0.12, hp: 1800 }); },
+    coin() { if (!rec('coin', 0.45)) { tone(1319, 0.07, { type: 'square', vol: 0.05 }); tone(1976, 0.13, { type: 'square', vol: 0.05, at: 0.06 }); } },
+    jump() { if (!rec('jump', 0.6)) tone(300, 0.16, { to: 640, type: 'triangle', vol: 0.12 }); },
+    slide() { if (!rec('slide', 0.6)) noise(0.2, { vol: 0.12, hp: 1800 }); },
     // a gunshot: sharp crack, low thump, then the echo off the stands
-    shoot() { noise(0.09, { vol: 0.3, hp: 900 }); tone(160, 0.14, { to: 50, vol: 0.3 }); noise(0.35, { vol: 0.07, lp: 1400, at: 0.09 }); },
-    pant() { for (let i = 0; i < 3; i++) noise(0.24, { vol: 0.12, lp: 1100, at: i * 0.5 }); },
-    hurt() { tone(210, 0.26, { to: 70, type: 'sawtooth', vol: 0.2 }); noise(0.2, { vol: 0.2, lp: 900 }); },
+    shoot() { if (!rec('pistol', 0.55)) { noise(0.09, { vol: 0.3, hp: 900 }); tone(160, 0.14, { to: 50, vol: 0.3 }); noise(0.35, { vol: 0.07, lp: 1400, at: 0.09 }); } },
+    pant() { if (!rec('pant', 0.7)) for (let i = 0; i < 3; i++) noise(0.24, { vol: 0.12, lp: 1100, at: i * 0.5 }); },
+    hurt() { if (!rec('hurt', 0.8)) { tone(210, 0.26, { to: 70, type: 'sawtooth', vol: 0.2 }); noise(0.2, { vol: 0.2, lp: 900 }); } },
     block() { tone(520, 0.12, { to: 900, type: 'triangle', vol: 0.14 }); },
-    boom() { noise(0.35, { vol: 0.26, lp: 700 }); tone(120, 0.3, { to: 40, vol: 0.2 }); },
-    dq() { tone(700, 0.08, { type: 'square', vol: 0.06 }); tone(350, 0.2, { type: 'square', vol: 0.06, at: 0.08 }); },
-    power() { tone(520, 0.1, { type: 'triangle' }); tone(780, 0.1, { type: 'triangle', at: 0.08 }); tone(1040, 0.2, { type: 'triangle', at: 0.16 }); },
-    medal() { [523, 659, 784, 1047].forEach((f, i) => tone(f, i == 3 ? 0.45 : 0.14, { type: 'square', vol: 0.07, at: i * 0.1 })); },
-    over() { [392, 330, 262, 196].forEach((f, i) => tone(f, 0.3, { type: 'triangle', vol: 0.14, at: i * 0.16 })); },
-    click() { tone(660, 0.05, { type: 'square', vol: 0.035 }); },
+    boom() { if (!rec('missile-hit', 0.7)) { noise(0.35, { vol: 0.26, lp: 700 }); tone(120, 0.3, { to: 40, vol: 0.2 }); } },
+    ballot() { rec('ballot-box', 0.7); },
+    drone() { if (!rec('drone-down', 0.7)) LIB.boom(); },
+    dq() { if (!rec('whistle', 0.5)) { tone(700, 0.08, { type: 'square', vol: 0.06 }); tone(350, 0.2, { type: 'square', vol: 0.06, at: 0.08 }); } },
+    power() { if (!rec('powerup', 0.6)) { tone(520, 0.1, { type: 'triangle' }); tone(780, 0.1, { type: 'triangle', at: 0.08 }); tone(1040, 0.2, { type: 'triangle', at: 0.16 }); } },
+    medal() { if (!rec('medal', 0.7)) [523, 659, 784, 1047].forEach((f, i) => tone(f, i == 3 ? 0.45 : 0.14, { type: 'square', vol: 0.07, at: i * 0.1 })); },
+    over() { if (!rec('gameover', 0.8)) [392, 330, 262, 196].forEach((f, i) => tone(f, 0.3, { type: 'triangle', vol: 0.14, at: i * 0.16 })); },
+    click() { if (!rec('click', 0.5)) tone(660, 0.05, { type: 'square', vol: 0.035 }); },
     cheer() { if (!clip('roar')) { noise(1.6, { vol: 0.2, lp: 1800 }); noise(1.2, { vol: 0.12, hp: 2500, at: 0.1 }); } },   // the stadium erupts
-    launch() { noise(0.5, { vol: 0.22, hp: 700 }); tone(240, 0.5, { to: 900, type: 'sawtooth', vol: 0.05 }); },
-    incoming() { tone(1900, 1.5, { to: 320, vol: 0.14 }); noise(1.5, { vol: 0.06, hp: 2000 }); },
-    doom() { noise(1.5, { vol: 0.5, lp: 480 }); noise(0.5, { vol: 0.3, lp: 2600 }); tone(90, 1.3, { to: 28, vol: 0.5 }); },
-    unlock() { tone(784, 0.1, { type: 'triangle' }); tone(1175, 0.25, { type: 'triangle', at: 0.1 }); }
+    launch() { if (!rec('missile-launch', 0.7)) { noise(0.5, { vol: 0.22, hp: 700 }); tone(240, 0.5, { to: 900, type: 'sawtooth', vol: 0.05 }); } },
+    incoming() { if (!rec('doom-incoming', 0.7)) { tone(1900, 1.5, { to: 320, vol: 0.14 }); noise(1.5, { vol: 0.06, hp: 2000 }); } },
+    doom() { if (!rec('doom-blast', 1)) { noise(1.5, { vol: 0.5, lp: 480 }); noise(0.5, { vol: 0.3, lp: 2600 }); tone(90, 1.3, { to: 28, vol: 0.5 }); } },
+    unlock() { if (!rec('purchase', 0.6)) { tone(784, 0.1, { type: 'triangle' }); tone(1175, 0.25, { type: 'triangle', at: 0.1 }); } }
   };
   function play(n) { if (LIB[n]) LIB[n](); }
 
@@ -304,18 +320,48 @@ const Snd = (() => {
       .then(b => AC.decodeAudioData(b, d => { bufs[name] = d; if (name == 'crowd') crowd(crowdOn); }, () => (bufs[name] = false)))
       .catch(() => (bufs[name] = false));
   }
-  function preload() { for (const k in AUDIO_FILES) load(k); }
-  function clip(name, reps = 1, gap = 0) {          // play a recorded clip; false if there is none, and the caller synthesises
+  function preload() {
+    for (const k in AUDIO_FILES) load(k);
+    for (const t in VOICE) fetch_vo(VOICE[t]);
+    for (let i = 1; i <= 6; i++) fetch_vo('ann-event-' + i);
+  }
+  function clip(name, reps = 1, gap = 0, vol = 0.9) {          // play a recorded clip; false if there is none, and the caller synthesises
     load(name);
     if (!bufs[name]) return bufs[name] === null;    // still loading: stay quiet this once
     for (let i = 0; i < reps; i++) {
       const src = AC.createBufferSource(), v = AC.createGain();
-      src.buffer = bufs[name]; v.gain.value = 0.9;
+      src.buffer = bufs[name]; v.gain.value = vol;
       src.connect(v); v.connect(sfxG);
       src.start(AC.currentTime + 0.03 + i * gap);
     }
     return true;
   }
+  // ---- spoken lines, one at a time. A line asked for while another plays waits its turn (only the latest
+  // waits); 'quiet' lines are dropped instead. Only the compressed bytes are kept; each line is decoded when spoken.
+  const raw = {};
+  let voBusy = false, voNext = null;
+  function fetch_vo(n) {
+    if (raw[n] !== undefined) return;
+    raw[n] = null;
+    fetch(`web/audio/voice/${n}.mp3`).then(r => r.ok ? r.arrayBuffer() : false).then(b => (raw[n] = b), () => (raw[n] = false));
+  }
+  function speak(t, quiet) {
+    const n = VOICE[t] || t;
+    if (!ok()) return false;
+    fetch_vo(n);
+    if (!raw[n]) return false;
+    if (voBusy) { if (!quiet) voNext = n; return true; }
+    voBusy = true;
+    const next = () => { voBusy = false; if (voNext) { const k = voNext; voNext = null; speak(k); } };
+    AC.decodeAudioData(raw[n].slice(0), b => {
+      const src = AC.createBufferSource();
+      src.buffer = b; src.connect(voG); src.onended = next;
+      duck(b.duration + 0.2);
+      src.start();
+    }, next);
+    return true;
+  }
+
   function duck(sec) {                              // the music steps back for a moment, then returns
     const t = AC.currentTime;
     duckG.gain.cancelScheduledValues(t);
@@ -408,7 +454,7 @@ const Snd = (() => {
     if (document.hidden) AC.suspend(); else AC.resume();
   });
 
-  return { unlock, volumes, tone, noise, play, flame, crowd, chant, scream, music, nodes: () => [AC, duckG, sfxG] };
+  return { unlock, volumes, tone, noise, play, speak, flame, crowd, chant, scream, music, nodes: () => [AC, duckG, sfxG, voG, bufs, raw] };
 })();
 
 // The original port's beep. Kept so the simulation code can stay close to native/11.py.
