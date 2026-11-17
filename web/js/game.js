@@ -774,7 +774,7 @@ class Game {
     }
     s.talk -= dt;
     if (s.talk <= 0) {                                           // now and then the Supreme Leader shares a thought
-      s.talk = random.uniform(13, 20);
+      s.talk = random.uniform(9, 14);
       Bus.emit('say', 'run');
     }
     s.shake = Math.max(0, s.shake - dt * 1.5);

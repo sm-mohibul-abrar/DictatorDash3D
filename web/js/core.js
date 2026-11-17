@@ -228,7 +228,7 @@ const Snd = (() => {
     src.start(t, Math.random() * 0.5); src.stop(t + d + 0.02);
   }
 
-  const rec = (n, v = 0.8) => !!bufs['sfx-' + n] && clip('sfx-' + n, 1, 0, v);   // the recording, if it has loaded
+  const rec = (n, v = 0.8) => (LOCAL || !!bufs['sfx-' + n]) && clip('sfx-' + n, 1, 0, v);   // the recording, if it has loaded
   const LIB = {
     coin() { if (!rec('coin', 0.45)) { tone(1319, 0.07, { type: 'square', vol: 0.05 }); tone(1976, 0.13, { type: 'square', vol: 0.05, at: 0.06 }); } },
     jump() { if (!rec('jump', 0.6)) tone(300, 0.16, { to: 640, type: 'triangle', vol: 0.12 }); },
@@ -312,20 +312,31 @@ const Snd = (() => {
     os.start(t); os.stop(t + dur + 0.05);
   }
 
-  const bufs = {};
-  function load(name) {                             // fetch and decode one crowd clip, once
-    if (bufs[name] !== undefined || !AUDIO_FILES[name]) return;
+  // The files are fetched as soon as the page opens (that needs no audio context), so they are ready for the
+  // first click, and decoded once sound is unlocked. Opened straight from disk (file:) fetch is blocked, so
+  // there the files are played with <audio> elements instead.
+  const LOCAL = location.protocol == 'file:';
+  const bufs = {}, pre = {};
+  const grab = name => pre[name] || (pre[name] = fetch(AUDIO_FILES[name]).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null));
+  function load(name) {                             // decode one clip, once
+    if (LOCAL || !AC || bufs[name] !== undefined || !AUDIO_FILES[name]) return;   // not before sound is unlocked
     bufs[name] = null;
-    fetch(AUDIO_FILES[name]).then(r => r.arrayBuffer())
-      .then(b => AC.decodeAudioData(b, d => { bufs[name] = d; if (name == 'crowd') crowd(crowdOn); }, () => (bufs[name] = false)))
-      .catch(() => (bufs[name] = false));
+    grab(name).then(b => {
+      if (!b) { bufs[name] = false; return; }
+      AC.decodeAudioData(b, d => { bufs[name] = d; if (name == 'crowd') crowd(crowdOn); }, () => (bufs[name] = false));
+    });
   }
-  function preload() {
-    for (const k in AUDIO_FILES) load(k);
-    for (const t in VOICE) fetch_vo(VOICE[t]);
-    for (let i = 1; i <= 6; i++) fetch_vo('ann-event-' + i);
-  }
+  function preload() { for (const k in AUDIO_FILES) load(k); }
   function clip(name, reps = 1, gap = 0, vol = 0.9) {          // play a recorded clip; false if there is none, and the caller synthesises
+    if (LOCAL) {
+      if (!AUDIO_FILES[name]) return false;
+      for (let i = 0; i < reps; i++) setTimeout(() => {
+        const a = new Audio(AUDIO_FILES[name]);
+        a.volume = Math.min(1, vol * SET.sfx);
+        a.play().catch(() => { /* no such file */ });
+      }, i * gap * 1000);
+      return true;
+    }
     load(name);
     if (!bufs[name]) return bufs[name] === null;    // still loading: stay quiet this once
     for (let i = 0; i < reps; i++) {
@@ -338,21 +349,37 @@ const Snd = (() => {
   }
   // ---- spoken lines, one at a time. A line asked for while another plays waits its turn (only the latest
   // waits); 'quiet' lines are dropped instead. Only the compressed bytes are kept; each line is decoded when spoken.
-  const raw = {};
+  const raw = {}, rawP = {};
   let voBusy = false, voNext = null;
   function fetch_vo(n) {
-    if (raw[n] !== undefined) return;
-    raw[n] = null;
-    fetch(`web/audio/voice/${n}.mp3`).then(r => r.ok ? r.arrayBuffer() : false).then(b => (raw[n] = b), () => (raw[n] = false));
+    if (!rawP[n]) {
+      raw[n] = null;
+      rawP[n] = fetch(`web/audio/voice/${n}.mp3`).then(r => r.ok ? r.arrayBuffer() : false).catch(() => false).then(b => (raw[n] = b));
+    }
+    return rawP[n];
   }
   function speak(t, quiet) {
     const n = VOICE[t] || t;
     if (!ok()) return false;
-    fetch_vo(n);
-    if (!raw[n]) return false;
     if (voBusy) { if (!quiet) voNext = n; return true; }
+    let done = false;
+    const next = () => { if (done) return; done = true; voBusy = false; if (voNext) { const k = voNext; voNext = null; speak(k); } };
+    if (LOCAL) {
+      voBusy = true;
+      const a = new Audio(`web/audio/voice/${n}.mp3`);
+      a.volume = SET.voice == null ? 1 : SET.voice;
+      a.onended = a.onerror = next;
+      a.onloadedmetadata = () => duck(a.duration + 0.2);
+      a.play().catch(next);
+      return true;
+    }
+    if (!raw[n]) {
+      if (quiet || fetch_vo(n) && raw[n] === false) return false;
+      voBusy = true;                                // still on its way: say it as soon as it arrives
+      rawP[n].then(b => { if (b) { voBusy = false; speak(n); } else next(); });
+      return true;
+    }
     voBusy = true;
-    const next = () => { voBusy = false; if (voNext) { const k = voNext; voNext = null; speak(k); } };
     AC.decodeAudioData(raw[n].slice(0), b => {
       const src = AC.createBufferSource();
       src.buffer = b; src.connect(voG); src.onended = next;
@@ -454,6 +481,11 @@ const Snd = (() => {
     if (document.hidden) AC.suspend(); else AC.resume();
   });
 
+  if (!LOCAL) {                                     // start fetching straight away: see load()
+    for (const k in AUDIO_FILES) grab(k);
+    for (const t in VOICE) fetch_vo(VOICE[t]);
+    fetch_vo('ann-event-1');
+  }
   return { unlock, volumes, tone, noise, play, speak, flame, crowd, chant, scream, music, nodes: () => [AC, duckG, sfxG, voG, bufs, raw] };
 })();
 

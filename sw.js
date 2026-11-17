@@ -8,7 +8,7 @@
  * Spoken lines (web/audio/voice) are cached as they are first fetched.
  * Bump CACHE whenever the files below change in a release: that clears the old copy.
  */
-const CACHE = 'dictators-dash-v4.8.0';
+const CACHE = 'dictators-dash-v4.8.1';
 const FILES = [
   './',
   'index.html',
@@ -58,7 +58,8 @@ const FILES = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // 'reload': never install a stale copy from the browser's own cache
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -73,7 +74,7 @@ self.addEventListener('fetch', e => {
   if (req.method != 'GET' || new URL(req.url).origin != self.location.origin) return;
   e.respondWith(caches.open(CACHE).then(async cache => {
     const hit = await cache.match(req, { ignoreSearch: true });
-    const fresh = fetch(req).then(res => {
+    const fresh = fetch(req.url, { cache: 'no-cache' }).then(res => {
       if (res.ok) cache.put(req, res.clone());
       return res;
     }).catch(() => hit);

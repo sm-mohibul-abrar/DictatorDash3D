@@ -108,7 +108,7 @@ const UIX = (() => {
     const must = kind == 'start' || kind == 'win' || kind == 'tired';
     if (kind == 'start' && g.state == 'play') Snd.speak('ann-event-1');   // the announcer calls the first event
     if (!talks() || g.state != 'play') return;
-    if (!must && (g.t - quoteAt < 5 || Math.random() < 0.35)) return;   // do not talk over himself, and not every time
+    if (!must && (g.t - quoteAt < 5 || Math.random() < 0.2)) return;   // do not talk over himself, and not every time
     quoteAt = g.t;
     const q = el('quote');
     el('quote-who').textContent = P.skin == 'double' ? 'EFAWADH (AS ALADEEN)' : 'ALADEEN';
@@ -616,6 +616,8 @@ const UIX = (() => {
   // ------------------------------------------------------------------ offline support
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !/[?&]nosw\b/.test(location.search)) {
     addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { /* offline play is optional */ }));
+    const had = !!navigator.serviceWorker.controller;          // an older release was running: show the new one as soon as it is ready
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && g.state == 'menu') location.reload(); });
   }
 
   return { frame, key, close, blocking: () => !!modal, toast };
